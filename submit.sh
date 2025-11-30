@@ -4,8 +4,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=1200GB
 #SBATCH --cpus-per-task=144
-#SBATCH --output=/work/projects/polyullm/wtf/spark/logs/slurm/%j-spark.out
-#SBATCH --error=/work/projects/polyullm/wtf/spark/logs/slurm/%j-spark.err
+#SBATCH --output=logs/slurm/%j-spark.out
+#SBATCH --error=logs/slurm/%j-spark.err
 
 # set -x
 
