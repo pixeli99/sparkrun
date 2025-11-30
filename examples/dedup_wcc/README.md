@@ -23,7 +23,7 @@ sbatch --nodes=<number-of-nodes> submit.sh <config-file> <task-script>
 - `<config-file>`: Custom configuration file for additional parameters (optional)
 - `<task-script>`: The script that defines the Spark job to execute
 
-## Advanced Options
+**Advanced Options:**
 
 You can also customize CPU and memory allocation through sbatch parameters. However, it is recommended to consult with the repository owner or system administrator to evaluate the appropriate resource requirements for your specific workload.
 
