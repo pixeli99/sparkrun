@@ -236,17 +236,17 @@ def run_chukonu(spark, args, parquet_file_path: str, result_path: str, dup_path:
     ).T
 
     if args.file_type == "json":
-        df = spark.read.json(parquet_file_path).select("text")
+        df = spark.read.json(parquet_file_path).select(args.text_key)
     else:
-        df = spark.read.parquet(parquet_file_path).select("text")
+        df = spark.read.parquet(parquet_file_path).select(args.text_key)
 
-    df = df.dropDuplicates(subset=["text"])
+    df = df.dropDuplicates(subset=[args.text_key])
     df.write.mode("overwrite").parquet(dedup_path)
     print(f"Total number of documents after deduplication: {df.count()}")
 
     normal_str = F.udf(normal_str_udf, StringType())
     uid_df = df.withColumn("uid", F.monotonically_increasing_id())
-    records = uid_df.withColumn("content", normal_str(F.col("text"))).select("uid", "content")
+    records = uid_df.withColumn("content", normal_str(F.col(args.text_key))).select("uid", "content")
 
     minhash_schema = StructType(
         [
@@ -315,13 +315,13 @@ def run_spark(spark, args, parquet_file_path: str, result_path: str, dup_path: s
     else:
         df = spark.read.parquet(parquet_file_path)
     
-    df = df.dropDuplicates(subset=["text"])
+    df = df.dropDuplicates(subset=[args.text_key])
     df.write.mode("overwrite").parquet(dedup_path)
     print(f"Total number of documents after deduplication: {df.count()}")
 
     normal_str = F.udf(normal_str_udf, StringType())
     uid_df = df.withColumn("uid", F.monotonically_increasing_id())
-    records = uid_df.withColumn("content", normal_str(F.col("text"))).select("uid", "content")
+    records = uid_df.withColumn("content", normal_str(F.col(args.text_key))).select("uid", "content")
 
     edges = (
         records
@@ -386,6 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_path", type=str, required=True, help="Input path")
     parser.add_argument("--output_path", type=str, required=True, help="Output path")
     parser.add_argument("--file_type", type=str, default="parquet", choices=["json", "parquet"], help="File type (json or parquet)")
+    parser.add_argument("--text_key", type=str, default="text", help="Text key")
     args = parser.parse_args()
     
     print(args)
