@@ -30,7 +30,12 @@ You can also customize CPU and memory allocation through sbatch parameters. Howe
 **Example:**
 
 ```bash
-sbatch --nodes=16 submit.sh examples/dedup_wcc/config.sh examples/dedup_wcc/run_dedup_wcc.sh
+cp examples/dedup_wcc/config.sh examples/dedup_wcc/my_config.sh
+# Modify my_config.sh to meet your requirements, e.g., update paths
+sbatch --nodes=16 submit.sh examples/dedup_wcc/my_config.sh examples/dedup_wcc/run_dedup_wcc.sh
 ```
 
-This example submits a job using 16 nodes with the configuration file `examples/dedup_wcc/config.sh` and the task script `examples/dedup_wcc/run_dedup_wcc.sh`.
+This example demonstrates the recommended workflow:
+1. Copy the default configuration file to create your own custom configuration
+2. Modify `my_config.sh` to customize parameters such as input/output paths
+3. Submit the job using 16 nodes with your custom configuration file and the task script
