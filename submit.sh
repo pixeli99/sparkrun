@@ -109,7 +109,7 @@ PYTHONUNBUFFERED=1 srun --overlap --nodes=1 --ntasks=1 -w "$head_node" \
     --container-name=$container_name \
     bash -c "$SCRIPTS"
 
-# Clean up Ray processes
+# Clean up Spark processes
 cleanup() {
     echo "Shutting down Spark cluster..."
     srun --overlap --nodes=1 --ntasks=1 -w "$head_node" \
