@@ -1,93 +1,232 @@
 # Spark Runner
 
+A framework for running distributed Spark jobs on SLURM-managed clusters using containerized environments. This repository provides tools and examples for submitting and managing large-scale data processing tasks with Apache Spark.
 
+## Overview
 
-## Getting started
+Spark Runner simplifies the process of running Spark applications on HPC clusters by:
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- **Automated Cluster Setup**: Automatically configures Spark master and worker nodes across allocated compute nodes
+- **Container Integration**: Uses containerized environments (chukonu) for consistent execution environments
+- **Resource Management**: Integrates with SLURM for job scheduling and resource allocation
+- **Example Workflows**: Provides ready-to-use examples for common data processing tasks
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Project Structure
 
 ```
-cd existing_repo
-git remote add origin http://git.infix-ai.xyz/pretrain/spark-runner.git
-git branch -M main
-git push -uf origin main
+spark-runner/
+├── submit.sh              # Main SLURM submission script for Spark jobs
+├── tools/                 # Python scripts for Spark tasks
+│   ├── dedup_wcc.py      # Deduplication and weakly connected components
+│   └── fasttext_filter.py # FastText-based language filtering
+└── examples/             # Example configurations and run scripts
+    ├── dedup_wcc/        # Deduplication example
+    └── filter/           # FastText filtering example
 ```
 
-## Integrate with your tools
+## Development Guidelines
 
-- [ ] [Set up project integrations](http://git.infix-ai.xyz/pretrain/spark-runner/-/settings/integrations)
+### Creating a New Example
 
-## Collaborate with your team
+When adding a new Spark task to this repository, follow this structure:
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+#### 1. Directory Structure
 
-## Test and Deploy
+Create a new directory under `examples/` with the following files:
 
-Use the built-in continuous integration in GitLab.
+```
+examples/your_task/
+├── config.sh          # Configuration file with environment variables
+├── run_<task_name>.sh # Task execution script
+└── README.md          # Documentation for your example
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+#### 2. Configuration File (`config.sh`)
 
-***
+The configuration file should export environment variables that will be used by your task script. Common variables include:
 
-# Editing this README
+```bash
+#!/bin/bash
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+# Dataset parameters
+export INPUT_PATH="/path/to/input/data"
+export OUTPUT_PATH="/path/to/output/data"
+export FILE_TYPE="parquet"  # or "json"
+export TEXT_KEY="text"      # key name for text field
 
-## Suggestions for a good README
+# Task-specific parameters
+export PARAM1="value1"
+export PARAM2="value2"
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+**Best Practices:**
+- Use absolute paths for input/output directories
+- Prefer Lustre filesystem paths for better performance
+- Document all parameters in your README.md
 
-## Name
-Choose a self-explaining name for your project.
+#### 3. Task Script (`run_<task_name>.sh`)
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+The task script should:
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+1. **Validate required environment variables**:
+   ```bash
+   if [ -z "${MASTER_URL}" ]; then
+       echo "Error: MASTER_URL is required but not set"
+       exit 1
+   fi
+   ```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+2. **Set default values** for optional parameters:
+   ```bash
+   EXECUTOR_CORES="${EXECUTOR_CORES:-4}"
+   EXECUTOR_MEMORY="${EXECUTOR_MEMORY:-32G}"
+   ```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+3. **Build the spark-submit command** with proper configuration:
+   ```bash
+   spark-submit \
+       --master ${MASTER_URL} \
+       --executor-cores ${EXECUTOR_CORES} \
+       --executor-memory ${EXECUTOR_MEMORY} \
+       --conf spark.default.parallelism=${DEFAULT_PARALLELISM} \
+       --conf spark.sql.shuffle.partitions=${SQL_SHUFFLE_PARTITIONS} \
+       tools/your_script.py \
+       --input_path ${INPUT_PATH} \
+       --output_path ${OUTPUT_PATH}
+   ```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+4. **Handle logging**:
+   ```bash
+   LOG_PATH=${LOG_PATH:-/path/to/logs}
+   TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+   LOG_FILE="${LOG_PATH}/spark-runtime-${TIMESTAMP}.log"
+   ```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+#### 4. Python Task Script (`tools/your_script.py`)
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+Your Python script should:
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+1. **Use argparse** for command-line arguments:
+   ```python
+   parser = argparse.ArgumentParser()
+   parser.add_argument("--input_path", type=str, required=True)
+   parser.add_argument("--output_path", type=str, required=True)
+   ```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+2. **Configure SparkSession** with appropriate settings:
+   ```python
+   conf = SparkConf()
+   conf.set("spark.app.name", "YourTaskName")
+   spark = SparkSession.builder.config(conf=conf).getOrCreate()
+   ```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+3. **Handle errors gracefully** and provide informative output:
+   ```python
+   count = df.count()
+   print(f"Total number of documents: {count}")
+   ```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+4. **Clean up resources**:
+   ```python
+   spark.stop()
+   ```
 
-## License
-For open source projects, say how it is licensed.
+#### 5. README.md Template
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Your example README should include:
+
+```markdown
+# Task Name Demo
+
+Brief description of what this example demonstrates.
+
+## Prerequisites
+
+1. List any required dependencies
+2. File paths and permissions
+3. External resources (models, data, etc.)
+
+## How to Run
+
+Submit the job using:
+```bash
+sbatch --nodes=<number-of-nodes> submit.sh <config-file> <task-script>
+```
+
+**Parameters:**
+- `<number-of-nodes>`: Number of compute nodes
+- `<config-file>`: Your custom configuration file
+- `<task-script>`: The task execution script
+
+**Example:**
+```bash
+cp examples/your_task/config.sh examples/your_task/my_config.sh
+# Modify my_config.sh to meet your requirements
+sbatch --nodes=4 submit.sh examples/your_task/my_config.sh examples/your_task/run_task.sh
+```
+```
+
+### Prerequisites Checklist
+
+Before submitting a job, ensure:
+
+- [ ] **Write Permissions**: Verify paths in `submit.sh` have proper write permissions:
+  - SLURM log paths (`--output` and `--error`)
+  - Spark temporary directories (`tmp_dir` and `cache_dir`)
+  - Output paths specified in your config
+
+- [ ] **Filesystem**: Prefer Lustre filesystem for temporary files and logs for better performance
+
+- [ ] **Dependencies**: Ensure all required files are accessible:
+  - Python environments
+  - Model files (if using `--files` option)
+  - Input data files
+
+- [ ] **Resource Requirements**: Consult with repository owner or system administrator for appropriate resource allocation
+
+### Submitting Jobs
+
+The standard workflow is:
+
+```bash
+# 1. Copy and customize configuration
+cp examples/your_task/config.sh examples/your_task/my_config.sh
+# Edit my_config.sh with your paths and parameters
+
+# 2. Submit the job
+sbatch --nodes=<N> submit.sh examples/your_task/my_config.sh examples/your_task/run_task.sh
+```
+
+**Resource Customization:**
+
+You can customize CPU and memory allocation through sbatch parameters, but it's recommended to consult with the repository owner or system administrator to evaluate appropriate resource requirements for your specific workload.
+
+### Code Style Guidelines
+
+- **Bash Scripts**: Use `set -x` for debugging, but disable it before spark-submit to avoid verbose output
+- **Python Scripts**: Follow PEP 8 style guidelines, use type hints where appropriate
+- **Error Handling**: Always validate required environment variables and provide clear error messages
+- **Logging**: Use descriptive log messages and include timestamps
+- **Documentation**: Document all parameters and their default values
+
+## Advanced Features
+
+### Accessing Spark Web UI from VDI
+
+To access the Spark Web UI while a job is running:
+
+```bash
+# 1. Start local proxy through jump server
+ssh -D 8888 -N -J reallm.xyz@10.112.5.23 reallm.xyz@10.127.128.11
+
+# 2. Open a new terminal and launch Edge with SOCKS5 proxy
+& "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --proxy-server="socks5://127.0.0.1:8888" --user-data-dir="C:\temp\spark-edge"
+```
+
+**Note**: The Spark Web UI is only accessible while the Spark application is running. If the application has finished, you can only check the corresponding logs.
+
+## Examples
+
+- **[Deduplication and WCC](examples/dedup_wcc/)**: Demonstrates document deduplication using MinHash LSH and weakly connected components computation
+- **[FastText Filter](examples/filter/)**: Shows how to filter data using FastText language detection model
+
