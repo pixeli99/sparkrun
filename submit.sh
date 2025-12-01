@@ -13,10 +13,11 @@
 # replace these information with your own
 # ========================================================
 workdir=$(pwd)
+tmp_dir=/lustre/projects/polyullm/reallm.xyz/tmp/spark-${SLURM_JOB_ID}
+cache_dir=/lustre/projects/polyullm/reallm.xyz/tmp/chukonu_cache
 container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-20250818.sqsh
 container_name=chukonu+3.4.1-20250818
-container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm
-tmp_dir=/lustre/projects/polyullm/wtf/tmp/spark-${SLURM_JOB_ID}
+container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
 # ========================================================
 
 # Getting the node names
@@ -36,6 +37,7 @@ echo "IP Head: $ip_head"
 # create tmp folder
 mkdir -p ${tmp_dir}
 chmod -R 777 ${tmp_dir}
+mkdir -p ${cache_dir}
 
 printenv
 
@@ -92,16 +94,16 @@ sleep 60
 
 
 SCRIPTS="
-export MASTER_URL=$master_url
-export EXECUTOR_CORES=$executor_cores
-export EXECUTOR_MEMORY=$executor_memory
-export DEFAULT_PARALLELISM=$default_parallelism
-export SLURM_JOB_ID=$SLURM_JOB_ID
-export LOG_PATH=$tmp_dir
+export MASTER_URL='$master_url'
+export EXECUTOR_CORES='$executor_cores'
+export EXECUTOR_MEMORY='$executor_memory'
+export DEFAULT_PARALLELISM='$default_parallelism'
+export SLURM_JOB_ID='$SLURM_JOB_ID'
+export LOG_PATH='$tmp_dir'
 
-cd $workdir &&
-source $config_script &&
-bash $task_script"
+cd '$workdir' &&
+source '$config_script' &&
+bash '$task_script'"
 
 PYTHONUNBUFFERED=1 srun --overlap --nodes=1 --ntasks=1 -w "$head_node" \
     --container-name=$container_name \
