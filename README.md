@@ -164,7 +164,6 @@ cp examples/your_task/config.sh examples/your_task/my_config.sh
 # Modify my_config.sh to meet your requirements
 sbatch --nodes=4 submit.sh examples/your_task/my_config.sh examples/your_task/run_task.sh
 ```
-```
 
 ### Prerequisites Checklist
 
