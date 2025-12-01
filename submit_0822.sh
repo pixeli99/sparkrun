@@ -15,7 +15,7 @@
 workdir=$(pwd)
 container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-20250822.sqsh
 container_name=chukonu+3.4.1-20250822
-container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,/work/projects/polyullm/wtf/spark/chukonu_cache:/opt/chukonu_cache
+container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm
 tmp_dir=/lustre/projects/polyullm/wtf/tmp/spark-${SLURM_JOB_ID}
 # ========================================================
 
