@@ -13,10 +13,11 @@
 # replace these information with your own
 # ========================================================
 workdir=$(pwd)
+tmp_dir=/lustre/projects/polyullm/reallm.xyz/tmp/spark-${SLURM_JOB_ID}
+cache_dir=/lustre/projects/polyullm/reallm.xyz/tmp/chukonu_cache
 container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-20250818.sqsh
 container_name=chukonu+3.4.1-20250818
-container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,/work/projects/polyullm/wtf/spark/chukonu_cache:/opt/chukonu_cache
-tmp_dir=/lustre/projects/polyullm/wtf/tmp/spark-${SLURM_JOB_ID}
+container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
 # ========================================================
 
 # Getting the node names
@@ -36,6 +37,7 @@ echo "IP Head: $ip_head"
 # create tmp folder
 mkdir -p ${tmp_dir}
 chmod -R 777 ${tmp_dir}
+mkdir -p ${cache_dir}
 
 printenv
 

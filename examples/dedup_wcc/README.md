@@ -8,7 +8,7 @@ This example demonstrates how to run a deduplication and weakly connected compon
 
 2. Verify that the paths in `submit.sh` have proper write permissions. Pay special attention to:
    - **sbatch logs**: The `--output` and `--error` paths specified in the script
-   - **Spark temporary files and logs**: The `tmp_dir` configuration. Temporary files should preferably be stored on Lustre filesystem for better performance
+   - **Spark temporary files and logs**: The `tmp_dir` and `cache_dir` configuration. Temporary files should preferably be stored on Lustre filesystem for better performance
 
 ## How to Run
 
