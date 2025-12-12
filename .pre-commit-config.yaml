@@ -1,0 +1,12 @@
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: check-commit-msg
+        name: Commit Message Check
+        # 这里指定用 python 执行你的脚本
+        entry: python scripts/commit_msg_check.py
+        # 语言选 system，表示使用系统现有的 python，不重复创建虚拟环境
+        language: system
+        # 关键点：指定钩子类型为 commit-msg
+        stages: [commit-msg]
