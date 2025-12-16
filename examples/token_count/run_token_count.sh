@@ -80,7 +80,7 @@ spark-submit \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size=1g \
     --conf spark.local.dir="/work/projects/polyullm/wenjun/tmp" \
-    tools/util.py \
+    tools/token_count.py \
     --input-path "${INPUT_PATH}" \
     --output-path "${OUTPUT_PATH}" \
     --model-path "${MODEL_PATH}" \

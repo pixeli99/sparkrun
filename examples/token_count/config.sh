@@ -27,9 +27,9 @@ export SAMPLE_N="${SAMPLE_N:-$DEFAULT_SAMPLE_N}"
 
 # ====================================================================
 # 使用示例：
-#   sbatch --nodes=4 submit.sh examples/Utils/config.sh examples/Utils/run_util.sh
+#   sbatch --nodes=4 submit.sh examples/token_count/config.sh examples/token_count/run_token_count.sh
 #   
 #   或者通过环境变量传递参数：
 #   sbatch --export=ALL,INPUT_PATH="/path/to/input",OUTPUT_PATH="/path/to/output" \
-#          submit.sh examples/Utils/config.sh examples/Utils/run_util.sh
+#          submit.sh examples/token_count/config.sh examples/token_count/run_token_count.sh
 # ====================================================================
