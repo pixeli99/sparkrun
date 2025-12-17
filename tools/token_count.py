@@ -1,15 +1,12 @@
 import argparse
 import json
-import zstandard as zstd
 import time
 import os
 import sys
-import socket
-from typing import List, Dict, Any, Iterator
-from functools import reduce
+from typing import Iterator, Any
 
 from pyspark import SparkConf
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 
 from transformers import AutoTokenizer
@@ -58,56 +55,15 @@ def count_tokens_partition(iterator: Iterator[Any], model_path: str, text_col: s
 
 
 def run_spark_analysis(spark: SparkSession, args):
-    # 读取数据：根据路径自动判断文件类型
+    # 读取 Parquet 数据
     input_path = args.input_path
-    print(f"Reading data from: {input_path}")
+    print(f"Reading parquet data from: {input_path}")
 
-    # 根据路径自动判断文件类型并读取
-    input_path_lower = input_path.lower()
     try:
-        if "parquet" in input_path_lower:
-            print("Detected parquet format")
-            df = spark.read.parquet(input_path)
-        elif "jsonl.zst" in input_path_lower or ".zst" in input_path_lower:
-            # 处理 zstd 压缩的 JSONL 文件
-            print("Detected jsonl.zst format (zstd compressed)")
-            print("Reading as binary and decompressing...")
-            
-            try:
-                import zstandard as zstd
-            except ImportError:
-                raise ImportError("zstandard library is required for .jsonl.zst files. Install with: pip install zstandard")
-            
-            def decompress_jsonl_zst(iterator):
-                dctx = zstd.ZstdDecompressor()
-                for row in iterator:
-                    try:
-                        content = row.content if hasattr(row, 'content') else bytes(row)
-                        decompressed = dctx.decompress(content)
-                        for line in decompressed.decode('utf-8').split('\n'):
-                            if line.strip():
-                                yield line
-                    except Exception as e:
-                        print(f"Warning: Failed to decompress file {row.path if hasattr(row, 'path') else 'unknown'}: {e}", file=sys.stderr)
-                        continue
-            
-            binary_df = spark.read.format("binaryFile").load(input_path)
-            json_lines_rdd = binary_df.rdd.mapPartitions(decompress_jsonl_zst)
-            df = spark.read.json(json_lines_rdd.map(lambda x: x))
-        elif "json" in input_path_lower:
-            print("Detected json format")
-            df = spark.read.json(input_path)
-        else:
-            # 默认尝试 parquet
-            print("Unknown format, trying parquet...")
-            try:
-                df = spark.read.parquet(input_path)
-            except Exception:
-                # 如果 parquet 失败，尝试 json
-                print("Parquet failed, trying json...")
-                df = spark.read.json(input_path)
+        df = spark.read.parquet(input_path)
+        print(f"Successfully loaded parquet file(s)")
     except Exception as e:
-        print(f"Error reading input file: {e}", file=sys.stderr)
+        print(f"Error reading parquet file: {e}", file=sys.stderr)
         raise
     
     # 提取文本列
