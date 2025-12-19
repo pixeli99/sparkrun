@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+*.log
+
+# Data files
+*.parquet
+*.csv
+*.json
+*.txt
+!requirements.txt
+!README.txt
+*.tsv
+*.jsonl
+*.gz
+*.zip
+*.tar
+*.tar.gz
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.cache/
+
+# Output directories
+output/
+outputs/
+results/
+checkpoints/
+logs/
+
+# Test coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Environment variables
+.env
+.env.local
+
