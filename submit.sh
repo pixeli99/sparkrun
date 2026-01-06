@@ -14,9 +14,9 @@
 # ========================================================
 workdir=$(pwd)
 tmp_dir=/lustre/projects/polyullm/reallm.xyz/tmp/spark-${SLURM_JOB_ID}
-cache_dir=/lustre/projects/polyullm/reallm.xyz/tmp/chukonu_cache
-container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-20250818.sqsh
-container_name=chukonu+3.4.1-20250818
+cache_dir=$tmp_dir/chukonu_cache
+container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-jdk11-2026010601.sqsh
+container_name=chukonu+3.4.1-jdk11-2026010601
 container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
 # ========================================================
 
@@ -49,6 +49,7 @@ srun --nodes=1 --ntasks=1 -w "$head_node" \
     --container-mounts=$container_mounts,${tmp_dir}/${head_node}:/tmp,${tmp_dir}/${head_node}:/opt/spark/logs \
     --container-image=$container_image \
     --container-writable \
+    --container-remap-root \
     bash -c "bash /opt/spark/sbin/start-master.sh -h $head_node_ip  --webui-port 8031  && tail -f /dev/null" &
 
 sleep 5
@@ -67,7 +68,8 @@ for ((i = 1; i <= worker_num; i++)); do
         --container-mounts=$container_mounts,${tmp_dir}/${head_node}:/tmp,${tmp_dir}/${head_node}:/opt/spark/logs \
         --container-image=$container_image \
         --container-writable \
-            bash -c "bash /opt/spark/sbin/start-worker.sh spark://$head_node_ip:$port  && tail -f /dev/null" &
+        --container-remap-root \
+        bash -c "bash /opt/spark/sbin/start-worker.sh spark://$head_node_ip:$port  && tail -f /dev/null" &
         sleep 5
 done
 
@@ -87,6 +89,7 @@ echo "executor_cores: $executor_cores"
 echo "executor_memory: $executor_memory"
 echo "default_parallelism: $default_parallelism"
 echo "slurm_job_id: $SLURM_JOB_ID"
+echo "log_dir: $tmp_dir"
 echo "=================================================="
 
 echo "sleep 60 seconds"
@@ -116,6 +119,7 @@ cleanup() {
         --container-name=$container_name \
         --container-image=$container_image \
         --container-writable \
+        --container-remap-root \
         bash -c "bash /opt/spark/sbin/stop-master.sh"
 
     for ((i = 1; i <= worker_num; i++)); do
@@ -124,6 +128,7 @@ cleanup() {
             --container-name=$container_name \
             --container-image=$container_image \
             --container-writable \
+            --container-remap-root \
             bash -c "bash /opt/spark/sbin/stop-worker.sh"
     done
 }
