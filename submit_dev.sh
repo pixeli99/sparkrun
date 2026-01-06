@@ -86,6 +86,7 @@ echo "executor_cores: $executor_cores"
 echo "executor_memory: $executor_memory"
 echo "default_parallelism: $default_parallelism"
 echo "slurm_job_id: $SLURM_JOB_ID"
+echo "log_dir: $tmp_dir"
 echo "=================================================="
 
 echo "sleep infinity"
