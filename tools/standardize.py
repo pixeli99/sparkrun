@@ -11,12 +11,18 @@ if TOOLS_DIR not in sys.path:
     sys.path.insert(0, TOOLS_DIR)
 
 from data_schema.adapters import FineWebAdapter, FineWebEduAdapter, DCLMAdapter
+from data_schema.adapters import Dolma3MixCCAdapter, Dolma3MixCodeAdapter, Dolma3MixOCRAdapter, Dolma3MixMathAdapter, Dolma3MixWikiAdapter
 
 
 ADAPTERS = {
     "fineweb": FineWebAdapter,
     "fineweb_edu": FineWebEduAdapter,
     "dclm": DCLMAdapter,
+    "dolma3_mix_cc": Dolma3MixCCAdapter,
+    "dolma3_mix_code": Dolma3MixCodeAdapter,
+    "dolma3_mix_ocr": Dolma3MixOCRAdapter,
+    "dolma3_mix_math": Dolma3MixMathAdapter,
+    "dolma3_mix_wiki": Dolma3MixWikiAdapter,
 }
 
 
