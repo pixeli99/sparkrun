@@ -15,7 +15,7 @@ class DCLMAdapter(BaseAdapter):
             doc_id=doc_id,
             chunk_id="0",
             others={
-                "previous_word_count": int(raw_record["previous_word_count"]),
+                "previous_word_count": str(raw_record["previous_word_count"]),
                 "url": str(raw_record["url"]),
                 "warcinfo": str(raw_record["warcinfo"]),
             },
