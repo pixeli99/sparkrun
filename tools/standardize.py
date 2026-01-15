@@ -91,6 +91,12 @@ def main():
     standardized_df = convert_to_standard(df, args.adapter)
     if args.num_partitions > 0:
         standardized_df = standardized_df.repartition(args.num_partitions)
+    elif args.num_partitions < 0:
+        count = df.count()
+        print(f"Total number of documents: {count}")
+        print(f"Repartitioning to {int(count / 500000)} partitions")
+        standardized_df = standardized_df.repartition(int(count / 500000))
+
     standardized_df.write.mode("overwrite").parquet(args.output_path)
     spark.stop()
 
