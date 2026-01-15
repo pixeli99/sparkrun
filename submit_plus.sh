@@ -73,8 +73,7 @@ for ((i = 1; i <= worker_num; i++)); do
         sleep 5
 done
 
-config_script=$1
-task_script=$2
+task_script=$1
 
 master_url=spark://$head_node_ip:$port
 executor_cores=$(( $SLURM_CPUS_PER_TASK ))
@@ -82,7 +81,6 @@ executor_memory=$(( $SLURM_MEM_PER_NODE / 1024 ))G
 default_parallelism=$(( $SLURM_CPUS_PER_TASK * $worker_num ))
 
 echo "================ run task ========================"
-echo "config_script: $config_script"
 echo "task_script: $task_script"
 echo "master_url: $master_url"
 echo "executor_cores: $executor_cores"
@@ -97,6 +95,7 @@ sleep 60
 
 
 SCRIPTS="
+set -x
 export MASTER_URL='$master_url'
 export EXECUTOR_CORES='$executor_cores'
 export EXECUTOR_MEMORY='$executor_memory'
