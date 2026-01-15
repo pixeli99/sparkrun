@@ -65,11 +65,11 @@ def task2adapter(task):
         raise ValueError(f"Unknown task: {task}")
 
 cmd_template = """
-FILE_TYPE="json"
-INPUT_PATH="${INPUT_PATH}"
-OUTPUT_PATH="${OUTPUT_PATH}"
-NUM_PARTITIONS="${NUM_PARTITIONS}"
-ADAPTER="${ADAPTER}"
+FILE_TYPE="{FILE_TYPE}"
+INPUT_PATH="{INPUT_PATH}"
+OUTPUT_PATH="{OUTPUT_PATH}"
+NUM_PARTITIONS="{NUM_PARTITIONS}"
+ADAPTER="{ADAPTER}"
 sbatch --job-name=standardize-{TASK} --reservation=megatron --nodes=16 --export=ALL,INPUT_PATH="$INPUT_PATH",OUTPUT_PATH="$OUTPUT_PATH",FILE_TYPE="$FILE_TYPE",NUM_PARTITIONS="$NUM_PARTITIONS",ADAPTER="$ADAPTER" \
     submit_plus.sh examples/fineweb_standardize/run_fineweb_standardize.sh
 """
@@ -83,6 +83,7 @@ for task in tasks:
     adapter = task2adapter(task)
     
     cmd = cmd_template.format(
+        FILE_TYPE=file_type,
         INPUT_PATH=input_path,
         OUTPUT_PATH=output_path,
         FILE_TYPE=file_type,
