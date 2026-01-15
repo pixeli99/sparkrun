@@ -83,7 +83,6 @@ for task in tasks:
     adapter = task2adapter(task)
     
     cmd = cmd_template.format(
-        FILE_TYPE=file_type,
         INPUT_PATH=input_path,
         OUTPUT_PATH=output_path,
         FILE_TYPE=file_type,
