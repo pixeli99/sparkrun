@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import sys
 
@@ -33,6 +34,7 @@ def parse_args():
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument("--file_type", type=str, default="parquet", choices=["json", "parquet"])
     parser.add_argument("--num_partitions", type=int, default=0)
+    parser.add_argument("--partition_size_mb", type=int, default=0)
     return parser.parse_args()
 
 
@@ -80,6 +82,24 @@ def convert_to_standard(df, adapter_name):
     return df.sparkSession.createDataFrame(standardized_rdd, schema=schema)
 
 
+def get_input_bytes(spark, input_path):
+    jvm = spark._jvm
+    conf = spark._jsc.hadoopConfiguration()
+    fs = jvm.org.apache.hadoop.fs.FileSystem.get(conf)
+    path = jvm.org.apache.hadoop.fs.Path(input_path)
+    statuses = fs.globStatus(path)
+    if statuses is None:
+        return 0
+    total = 0
+    for status in statuses:
+        p = status.getPath()
+        if status.isFile():
+            total += status.getLen()
+        else:
+            total += fs.getContentSummary(p).getLength()
+    return total
+
+
 def main():
     args = parse_args()
     spark = build_spark()
@@ -91,6 +111,16 @@ def main():
     standardized_df = convert_to_standard(df, args.adapter)
     if args.num_partitions > 0:
         standardized_df = standardized_df.repartition(args.num_partitions)
+    elif args.partition_size_mb > 0:
+        total_bytes = get_input_bytes(spark, args.input_path)
+        if total_bytes <= 0:
+            print("Input size is 0 bytes; skip repartitioning")
+        else:
+            target_bytes = args.partition_size_mb * 1024 * 1024
+            partitions = max(1, int(math.ceil(total_bytes / target_bytes)))
+            print(f"Total input size: {total_bytes} bytes")
+            print(f"Repartitioning to {partitions} partitions (~{args.partition_size_mb} MB each)")
+            standardized_df = standardized_df.repartition(partitions)
     elif args.num_partitions < 0:
         count = df.count()
         print(f"Total number of documents: {count}")

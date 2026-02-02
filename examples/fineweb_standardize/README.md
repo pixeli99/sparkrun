@@ -12,5 +12,6 @@ INPUT_PATH=/path/to/fineweb/input \
 OUTPUT_PATH=/path/to/fineweb/standard \
 ADAPTER=fineweb \
 NUM_PARTITIONS=0 \
+PARTITION_SIZE_MB=512 \
 bash examples/fineweb_standardize/run_fineweb_standardize.sh
 ```

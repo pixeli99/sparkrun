@@ -18,6 +18,7 @@ OUTPUT_PATH=${OUTPUT_PATH:-"/path/to/fineweb/standard"}
 FILE_TYPE=${FILE_TYPE:-"parquet"}
 ADAPTER=${ADAPTER:-"fineweb"}
 NUM_PARTITIONS=${NUM_PARTITIONS:-"0"}
+PARTITION_SIZE_MB=${PARTITION_SIZE_MB:-"0"}
 
 LOG_PATH=${LOG_PATH:-/tmp/spark_logs}
 mkdir -p "${LOG_PATH}"
@@ -44,6 +45,7 @@ spark-submit \
     --output_path "${OUTPUT_PATH}" \
     --file_type "${FILE_TYPE}" \
     --num_partitions "${NUM_PARTITIONS}" \
+    --partition_size_mb "${PARTITION_SIZE_MB}" \
     > "${LOG_FILE}" 2> "${ERR_FILE}"
 
 echo "Stdout: ${LOG_FILE}"
