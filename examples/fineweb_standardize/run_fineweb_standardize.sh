@@ -39,6 +39,8 @@ spark-submit \
     --conf spark.default.parallelism=${DEFAULT_PARALLELISM} \
     --conf spark.sql.shuffle.partitions=${SQL_SHUFFLE_PARTITIONS} \
     --conf spark.sql.files.ignoreCorruptFiles=true \
+    --conf spark.rpc.message.maxSize=512 \
+    --conf spark.kryoserializer.buffer.max=1024m \
     tools/standardize.py \
     --adapter "${ADAPTER}" \
     --input_path "${INPUT_PATH}" \
