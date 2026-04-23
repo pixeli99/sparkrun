@@ -19,6 +19,15 @@ def log(message: str) -> None:
     print(f"[{timestamp}] {message}", flush=True)
 
 
+def parse_bool_arg(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean value: {value}")
+
+
 def filter_body_lines(text: str, line_id_json: str) -> str:
     """按 line_id JSON 里的 1-indexed 行号抽出正文行,其它行丢弃。"""
     if not text:
@@ -283,15 +292,23 @@ if __name__ == "__main__":
                         help="缓存选出的 text DataFrame。40TB 级别默认不要开启。")
     parser.add_argument("--count-total-docs", action="store_true",
                         help="在 token count 前先全量 count 文档数。40TB 级别默认不要开启。")
+    parser.add_argument("--show-console-progress", type=parse_bool_arg, default=False,
+                        help="是否显示 Spark console progress。超大任务建议关闭。")
+    parser.add_argument("--spark-log-level", type=str, default="WARN",
+                        choices=["ALL", "DEBUG", "ERROR", "FATAL", "INFO", "OFF", "TRACE", "WARN"],
+                        help="SparkContext log level。超大任务建议使用 WARN。")
     
     args = parser.parse_args()
     
     conf = SparkConf()
     conf.set("spark.app.name", "Spark_Debug_Env")
     conf.set("spark.hadoop.mapreduce.input.fileinputformat.input.dir.recursive", "true")
-    conf.set("spark.ui.showConsoleProgress", "true")
+    conf.set("spark.ui.showConsoleProgress", str(args.show_console_progress).lower())
     
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
+    spark.sparkContext.setLogLevel(args.spark_log_level)
+    log(f"Spark log level set to: {args.spark_log_level}")
+    log(f"Spark console progress enabled: {args.show_console_progress}")
 
     run_spark_analysis(spark, args)
     

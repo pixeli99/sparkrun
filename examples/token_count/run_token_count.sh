@@ -14,6 +14,8 @@ fi
 set -x
 
 # Read from environment variables, use defaults if not set
+DRIVER_MEMORY="${DRIVER_MEMORY:-32G}"
+DRIVER_MEMORY_OVERHEAD="${DRIVER_MEMORY_OVERHEAD:-8G}"
 EXECUTOR_CORES="${EXECUTOR_CORES:-4}"
 EXECUTOR_MEMORY="${EXECUTOR_MEMORY:-32G}"
 EXECUTOR_MEMORY_OVERHEAD="${EXECUTOR_MEMORY_OVERHEAD:-4G}"
@@ -50,6 +52,8 @@ LINE_ID_KEY=${LINE_ID_KEY:-""}
 PROGRESS_INTERVAL_SEC=${PROGRESS_INTERVAL_SEC:-"30"}
 CACHE_INPUT=${CACHE_INPUT:-"false"}
 COUNT_TOTAL_DOCS=${COUNT_TOTAL_DOCS:-"false"}
+SPARK_UI_SHOW_CONSOLE_PROGRESS=${SPARK_UI_SHOW_CONSOLE_PROGRESS:-"false"}
+SPARK_LOG_LEVEL=${SPARK_LOG_LEVEL:-"WARN"}
 
 # [Critical] Python Environment on Lustre (Must exist!)
 # 请修改为你解压后的真实路径
@@ -62,11 +66,18 @@ echo "Starting Spark Job..."
 echo "Master: ${MASTER_URL}"
 echo "Input: ${INPUT_PATH}"
 echo "Output: ${OUTPUT_PATH}"
+echo "DriverMemory: ${DRIVER_MEMORY}"
+echo "DriverMemoryOverhead: ${DRIVER_MEMORY_OVERHEAD}"
+echo "ExecutorCores: ${EXECUTOR_CORES}"
+echo "ExecutorMemory: ${EXECUTOR_MEMORY}"
+echo "ExecutorMemoryOverhead: ${EXECUTOR_MEMORY_OVERHEAD}"
 echo "TextKey: ${TEXT_KEY}"
 echo "LineIdKey: ${LINE_ID_KEY:-<none>}"
 echo "ProgressIntervalSec: ${PROGRESS_INTERVAL_SEC}"
 echo "CacheInput: ${CACHE_INPUT}"
 echo "CountTotalDocs: ${COUNT_TOTAL_DOCS}"
+echo "SparkUiShowConsoleProgress: ${SPARK_UI_SHOW_CONSOLE_PROGRESS}"
+echo "SparkLogLevel: ${SPARK_LOG_LEVEL}"
 
 LINE_ID_ARG=()
 if [ -n "${LINE_ID_KEY}" ]; then
@@ -85,8 +96,10 @@ fi
 
 spark-submit \
     --master ${MASTER_URL} \
+    --driver-memory ${DRIVER_MEMORY} \
     --executor-cores ${EXECUTOR_CORES} \
     --executor-memory ${EXECUTOR_MEMORY} \
+    --conf spark.driver.memoryOverhead=${DRIVER_MEMORY_OVERHEAD} \
     --conf spark.executor.memoryOverhead=${EXECUTOR_MEMORY_OVERHEAD} \
     --conf spark.pyspark.driver.python=${ENV_PYTHON} \
     --conf spark.pyspark.python=${ENV_PYTHON} \
@@ -102,7 +115,7 @@ spark-submit \
     --conf spark.shuffle.service.enabled=false \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size=1g \
-    --conf spark.ui.showConsoleProgress=true \
+    --conf spark.ui.showConsoleProgress=${SPARK_UI_SHOW_CONSOLE_PROGRESS} \
     --conf spark.local.dir="/work/projects/polyullm/lpx_log/tmp" \
     tools/token_count.py \
     --input-path "${INPUT_PATH}" \
@@ -113,6 +126,8 @@ spark-submit \
     --tools ${TOOLS} \
     --sample-n ${SAMPLE_N} \
     --progress-interval-sec "${PROGRESS_INTERVAL_SEC}" \
+    --show-console-progress "${SPARK_UI_SHOW_CONSOLE_PROGRESS}" \
+    --spark-log-level "${SPARK_LOG_LEVEL}" \
     "${CACHE_INPUT_ARG[@]}" \
     "${COUNT_TOTAL_DOCS_ARG[@]}" \
     > >(tee -a "${LOG_FILE}") \
