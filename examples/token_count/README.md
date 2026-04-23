@@ -20,14 +20,24 @@ sbatch --nodes=<number-of-nodes> submit.sh examples/token_count/config.sh exampl
 - `run_token_count.sh`: Spark job launcher; reads values from env/config (e.g., `INPUT_PATH`, `OUTPUT_PATH`, `MODEL_PATH`, `TOOLS`, `SAMPLE_N`).
 
 Key `config.sh` variables:
-- `TOOLS`: which token_countities to run, e.g. `sample count_tokens` or just use 'count_tokens'(space-separated).
+- `TOOLS`: which tools to run, e.g. `sample count_tokens` or just `count_tokens` (space-separated).
 - `SAMPLE_N`: sample size when `sample` tool is enabled.
+- `TEXT_KEY`: text column name (default `text`).
+- `LINE_ID_KEY`: 设为 `line_id` 时,脚本会解析该列的 JSON `{"line_id": [...]}`,只对被标记的正文行统计 token。用于 stage2 (noborder) 输出的 parquet。留空则统计整列 text。
 
 **Example:**
 ```bash
 cp examples/token_count/config.sh examples/token_count/my_config.sh
 # Edit my_config.sh to set INPUT_PATH/OUTPUT_PATH/MODEL_PATH/TOOLS/SAMPLE_N
 sbatch --nodes=4 submit.sh examples/token_count/my_config.sh examples/token_count/run_token_count.sh
+```
+
+**Example (对 stage2 noborder parquet 只统计正文 token):**
+```bash
+export INPUT_PATH="/work/projects/polyullm/lipengxiang_tmp/fineweb_noborder/CC-MAIN-*/*.parquet"
+export OUTPUT_PATH="/path/to/fineweb_noborder_tokens.json"
+export LINE_ID_KEY="line_id"
+sbatch --nodes=4 --export=ALL submit.sh examples/token_count/config.sh examples/token_count/run_token_count.sh
 ```
 
 ## Notes

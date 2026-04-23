@@ -13,7 +13,7 @@
 # replace these information with your own
 # ========================================================
 workdir=$(pwd)
-tmp_dir=/lustre/projects/polyullm/lipengxiang_tmp/tmp/spark-${SLURM_JOB_ID}
+tmp_dir=/work/projects/polyullm/lipengxiang_tmp/tmp/spark-${SLURM_JOB_ID}
 cache_dir=$tmp_dir/chukonu_cache
 container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-jdk11-2026010601.sqsh
 container_name=chukonu+3.4.1-jdk11-2026010601

@@ -2,6 +2,7 @@ import argparse
 import math
 import os
 import sys
+from datetime import datetime
 
 from pyspark import SparkConf
 from pyspark.sql import Row, SparkSession
@@ -25,6 +26,11 @@ ADAPTERS = {
     "dolma3_mix_math": Dolma3MixMathAdapter,
     "dolma3_mix_wiki": Dolma3MixWikiAdapter,
 }
+
+
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def parse_args():
@@ -102,33 +108,50 @@ def get_input_bytes(spark, input_path):
 
 def main():
     args = parse_args()
+    log(
+        f"Starting standardize job: adapter={args.adapter}, "
+        f"file_type={args.file_type}, input_path={args.input_path}, output_path={args.output_path}"
+    )
+    log("Creating Spark session")
     spark = build_spark()
+    log(f"Spark session ready: app_id={spark.sparkContext.applicationId}")
+    log(f"Reading input dataset from {args.input_path}")
     if args.file_type == "json":
         df = spark.read.json(args.input_path)
     else:
         df = spark.read.parquet(args.input_path)
+    log(f"Input DataFrame partitions: {df.rdd.getNumPartitions()}")
 
+    log(f"Converting records with adapter={args.adapter}")
     standardized_df = convert_to_standard(df, args.adapter)
     if args.num_partitions > 0:
+        log(f"Repartitioning to explicit num_partitions={args.num_partitions}")
         standardized_df = standardized_df.repartition(args.num_partitions)
     elif args.partition_size_mb > 0:
         total_bytes = get_input_bytes(spark, args.input_path)
         if total_bytes <= 0:
-            print("Input size is 0 bytes; skip repartitioning")
+            log("Input size is 0 bytes; skip repartitioning")
         else:
             target_bytes = args.partition_size_mb * 1024 * 1024
             partitions = max(1, int(math.ceil(total_bytes / target_bytes)))
-            print(f"Total input size: {total_bytes} bytes")
-            print(f"Repartitioning to {partitions} partitions (~{args.partition_size_mb} MB each)")
+            gib = total_bytes / (1024 ** 3)
+            log(f"Total input size: {total_bytes} bytes ({gib:.2f} GiB)")
+            log(f"Repartitioning to {partitions} partitions (~{args.partition_size_mb} MB each)")
             standardized_df = standardized_df.repartition(partitions)
     elif args.num_partitions < 0:
+        log("Counting input rows to infer partition count")
         count = df.count()
-        print(f"Total number of documents: {count}")
-        print(f"Repartitioning to {int(count / 500000)} partitions")
+        log(f"Total number of documents: {count}")
+        log(f"Repartitioning to {int(count / 500000)} partitions")
         standardized_df = standardized_df.repartition(int(count / 500000))
 
+    log(f"Output DataFrame partitions: {standardized_df.rdd.getNumPartitions()}")
+    log(f"Writing parquet output to {args.output_path}")
     standardized_df.write.mode("overwrite").parquet(args.output_path)
+    log(f"Write completed for {args.output_path}")
+    log("Stopping Spark session")
     spark.stop()
+    log("Spark session stopped")
 
 
 if __name__ == "__main__":

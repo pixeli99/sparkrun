@@ -11,11 +11,13 @@
 
 # 默认值定义
 DEFAULT_INPUT="/work/projects/polyullm/congkai/pretrain_data/Nemotron-CC-Math-v1/*/*.parquet"
-DEFAULT_OUTPUT="/work/projects/polyullm/wtf/data/Nemotraon-CC-Math-v1-analysis/report.json"
+DEFAULT_OUTPUT="/work/projects/polyullm/wtf/data/Nemotron-CC-Math-v1-analysis/report.json"
 DEFAULT_LOG_PATH="/work/projects/polyullm/wenjun/spark/logs/slurm"
 DEFAULT_MODEL_PATH="/work/projects/polyullm/models/Qwen/Qwen2.5-0.5B"
 DEFAULT_TOOLS="sample count_tokens"
 DEFAULT_SAMPLE_N="5"
+DEFAULT_TEXT_KEY="text"
+DEFAULT_LINE_ID_KEY=""  # 若统计 stage2 (noborder) 输出的正文行,设为 "line_id"
 
 # 优先级：环境变量 > 位置参数 > 默认值
 export INPUT_PATH="${INPUT_PATH:-${1:-$DEFAULT_INPUT}}"
@@ -24,6 +26,8 @@ export LOG_PATH="${LOG_PATH:-$DEFAULT_LOG_PATH}"
 export MODEL_PATH="${MODEL_PATH:-$DEFAULT_MODEL_PATH}"
 export TOOLS="${TOOLS:-$DEFAULT_TOOLS}"
 export SAMPLE_N="${SAMPLE_N:-$DEFAULT_SAMPLE_N}"
+export TEXT_KEY="${TEXT_KEY:-$DEFAULT_TEXT_KEY}"
+export LINE_ID_KEY="${LINE_ID_KEY:-$DEFAULT_LINE_ID_KEY}"
 
 # ====================================================================
 # 使用示例：

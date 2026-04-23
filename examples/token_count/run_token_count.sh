@@ -7,7 +7,7 @@
 if [ -z "${MASTER_URL}" ]; then
     echo "Error: MASTER_URL is required but not set"
     # 如果是在单机测试，可以取消下面这行的注释
-    # MASTER_URL="local[*]" 
+    # MASTER_URL="local[*]"
     exit 1
 fi
 
@@ -35,15 +35,18 @@ SQL_SHUFFLE_PARTITIONS=$(awk "BEGIN {print int(${DEFAULT_PARALLELISM} * 1.5)}")
 
 # Input/Output
 INPUT_PATH=${INPUT_PATH:-"/work/projects/polyullm/congkai/pretrain_data/Nemotron-CC-Math-v1/*/*.parquet"}
-OUTPUT_PATH=${OUTPUT_PATH:-"/work/projects/polyullm/wtf/data/Nemotraon-CC-Math-v1-analysis/report.json"}
+OUTPUT_PATH=${OUTPUT_PATH:-"/work/projects/polyullm/wtf/data/Nemotron-CC-Math-v1-analysis/report.json"}
 
 # Model Path (Tokenizer)
 # 必须是所有 Worker 节点都能访问的路径
-MODEL_PATH=${MODEL_PATH:-"/work/projects/polyullm/models/Qwen/Qwen2.5-7B"}
+MODEL_PATH=${MODEL_PATH:-"/work/projects/polyullm/models/Qwen/Qwen2.5-0.5B"}
 
 # Tools configuration
 TOOLS=${TOOLS:-"sample count_tokens"}
 SAMPLE_N=${SAMPLE_N:-"5"}
+TEXT_KEY=${TEXT_KEY:-"text"}
+# 若统计 stage2 (noborder) 输出,设为 "line_id" 即可按正文行号过滤后再统计
+LINE_ID_KEY=${LINE_ID_KEY:-""}
 
 # [Critical] Python Environment on Lustre (Must exist!)
 # 请修改为你解压后的真实路径
@@ -54,12 +57,16 @@ set +x
 
 echo "Starting Spark Job..."
 echo "Master: ${MASTER_URL}"
-echo "Script: ${PYTHON_SCRIPT_PATH}"
 echo "Input: ${INPUT_PATH}"
 echo "Output: ${OUTPUT_PATH}"
+echo "TextKey: ${TEXT_KEY}"
+echo "LineIdKey: ${LINE_ID_KEY:-<none>}"
 
-# Build spark-submit command
-# 注意：移除了 --conf spark.plugins=org.pacman.chukonu.ChukonuPlugin 及相关配置，因为新脚本不需要
+LINE_ID_ARG=()
+if [ -n "${LINE_ID_KEY}" ]; then
+    LINE_ID_ARG=(--line-id-key "${LINE_ID_KEY}")
+fi
+
 spark-submit \
     --master ${MASTER_URL} \
     --executor-cores ${EXECUTOR_CORES} \
@@ -84,10 +91,17 @@ spark-submit \
     --input-path "${INPUT_PATH}" \
     --output-path "${OUTPUT_PATH}" \
     --model-path "${MODEL_PATH}" \
+    --text-key "${TEXT_KEY}" \
+    "${LINE_ID_ARG[@]}" \
     --tools ${TOOLS} \
     --sample-n ${SAMPLE_N} \
-    > "${LOG_FILE}" 2> "${ERR_FILE}"
+    > >(tee -a "${LOG_FILE}") \
+    2> >(tee -a "${ERR_FILE}" >&2)
 
-echo "Job completed. Logs saved to:"
-echo "  Standard output: ${LOG_FILE}"
-echo "  Standard error:  ${ERR_FILE}"
+submit_status=$?
+
+echo "Stdout: ${LOG_FILE}"
+echo "Stderr: ${ERR_FILE}"
+echo "spark-submit exit code: ${submit_status}"
+
+exit "${submit_status}"
