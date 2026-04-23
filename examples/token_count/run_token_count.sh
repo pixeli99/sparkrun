@@ -47,6 +47,7 @@ SAMPLE_N=${SAMPLE_N:-"5"}
 TEXT_KEY=${TEXT_KEY:-"text"}
 # 若统计 stage2 (noborder) 输出,设为 "line_id" 即可按正文行号过滤后再统计
 LINE_ID_KEY=${LINE_ID_KEY:-""}
+PROGRESS_INTERVAL_SEC=${PROGRESS_INTERVAL_SEC:-"30"}
 
 # [Critical] Python Environment on Lustre (Must exist!)
 # 请修改为你解压后的真实路径
@@ -61,6 +62,7 @@ echo "Input: ${INPUT_PATH}"
 echo "Output: ${OUTPUT_PATH}"
 echo "TextKey: ${TEXT_KEY}"
 echo "LineIdKey: ${LINE_ID_KEY:-<none>}"
+echo "ProgressIntervalSec: ${PROGRESS_INTERVAL_SEC}"
 
 LINE_ID_ARG=()
 if [ -n "${LINE_ID_KEY}" ]; then
@@ -86,6 +88,7 @@ spark-submit \
     --conf spark.shuffle.service.enabled=false \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size=1g \
+    --conf spark.ui.showConsoleProgress=true \
     --conf spark.local.dir="/work/projects/polyullm/wenjun/tmp" \
     tools/token_count.py \
     --input-path "${INPUT_PATH}" \
@@ -95,6 +98,7 @@ spark-submit \
     "${LINE_ID_ARG[@]}" \
     --tools ${TOOLS} \
     --sample-n ${SAMPLE_N} \
+    --progress-interval-sec "${PROGRESS_INTERVAL_SEC}" \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)
 

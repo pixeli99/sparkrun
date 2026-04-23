@@ -3,6 +3,7 @@ import json
 import time
 import os
 import sys
+import threading
 from typing import Iterator, Any
 
 from pyspark import SparkConf
@@ -11,6 +12,11 @@ import pyspark.sql.functions as F
 from pyspark.sql.types import StringType
 
 from transformers import AutoTokenizer
+
+
+def log(message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def filter_body_lines(text: str, line_id_json: str) -> str:
@@ -37,23 +43,75 @@ def format_number(num: int) -> str:
     if num < 1_000_000_000: return f"{num / 1_000_000:.2f}M"
     return f"{num / 1_000_000_000:.2f}B"
 
-def count_tokens_partition(iterator: Iterator[Any], model_path: str, text_col: str) -> Iterator[int]:
+def format_duration(seconds: float) -> str:
+    total_seconds = int(seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def monitor_token_count_progress(
+    stop_event: threading.Event,
+    total_docs: int,
+    total_partitions: int,
+    processed_docs_acc: Any,
+    processed_tokens_acc: Any,
+    completed_partitions_acc: Any,
+    poll_interval_sec: int,
+) -> None:
+    started_at = time.time()
+    last_snapshot = None
+
+    while not stop_event.wait(max(1, poll_interval_sec)):
+        completed_partitions = int(completed_partitions_acc.value)
+        processed_docs = int(processed_docs_acc.value)
+        processed_tokens = int(processed_tokens_acc.value)
+        snapshot = (completed_partitions, processed_docs, processed_tokens)
+
+        if snapshot == last_snapshot:
+            continue
+        last_snapshot = snapshot
+
+        doc_pct = (processed_docs / total_docs * 100.0) if total_docs else 0.0
+        log(
+            "Token count progress: "
+            f"partitions={completed_partitions}/{total_partitions}, "
+            f"docs={format_number(processed_docs)}/{format_number(total_docs)} ({doc_pct:.1f}%), "
+            f"tokens={format_number(processed_tokens)}, "
+            f"elapsed={format_duration(time.time() - started_at)}"
+        )
+
+
+def count_tokens_partition(
+    iterator: Iterator[Any],
+    model_path: str,
+    text_col: str,
+    processed_docs_acc: Any,
+    processed_tokens_acc: Any,
+    completed_partitions_acc: Any,
+) -> Iterator[int]:
     # 强制禁用 HuggingFace tokenizers 的内部多线程并行
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+    local_total = 0
+    local_docs = 0
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
     except Exception as e:
         print(f"Error loading tokenizer on executor: {str(e)}", file=sys.stderr)
+        completed_partitions_acc.add(1)
         yield 0
         return
 
     # 3. 批量处理
-    local_total = 0
     batch_texts = []
     batch_size = 100 
 
     for row in iterator:
+        local_docs += 1
         val = row[text_col]
 
         if val: 
@@ -74,17 +132,21 @@ def count_tokens_partition(iterator: Iterator[Any], model_path: str, text_col: s
         else:
             local_total += sum(len(x) for x in enc['input_ids'])
 
+    processed_docs_acc.add(local_docs)
+    processed_tokens_acc.add(local_total)
+    completed_partitions_acc.add(1)
+
     yield local_total
 
 
 def run_spark_analysis(spark: SparkSession, args):
     # 读取 Parquet 数据
     input_path = args.input_path
-    print(f"Reading parquet data from: {input_path}")
+    log(f"Reading parquet data from: {input_path}")
 
     try:
         df = spark.read.parquet(input_path)
-        print(f"Successfully loaded parquet file(s)")
+        log("Successfully loaded parquet file(s)")
     except Exception as e:
         print(f"Error reading parquet file: {e}", file=sys.stderr)
         raise
@@ -96,13 +158,13 @@ def run_spark_analysis(spark: SparkSession, args):
         candidates = [c for c in cols if "text" in c.lower() or "content" in c.lower()]
         target = candidates[0] if candidates else cols[0]
         if target != args.text_key:
-            print(f"Using column '{target}' instead of '{args.text_key}'")
+            log(f"Using column '{target}' instead of '{args.text_key}'")
 
     if args.line_id_key:
         if args.line_id_key not in cols:
             print(f"Error: --line-id-key '{args.line_id_key}' not found in columns {cols}", file=sys.stderr)
             raise ValueError(f"line_id column '{args.line_id_key}' not found")
-        print(f"Filtering body lines by column '{args.line_id_key}' before token counting")
+        log(f"Filtering body lines by column '{args.line_id_key}' before token counting")
         filter_body_udf = F.udf(filter_body_lines, StringType())
         df = df.select(
             filter_body_udf(
@@ -113,27 +175,63 @@ def run_spark_analysis(spark: SparkSession, args):
     else:
         df = df.select(F.col(target).alias("text").cast("string"))
     df = df.cache()
+    total_partitions = df.rdd.getNumPartitions()
     total_docs = df.count()
-    print(f"Total documents loaded: {total_docs}")
+    log(f"Total documents loaded: {format_number(total_docs)}")
+    log(f"Input partitions: {total_partitions}")
 
     results = {
         "meta": vars(args),
         "total_docs": total_docs,
         "details": {}
     }
+    results["meta"]["input_partitions"] = total_partitions
 
     if "count_tokens" in args.tools:
-        # 使用 collect 来调试查看每个分区的结果
-        partition_results = df.rdd.mapPartitions(
-            lambda iter: count_tokens_partition(iter, args.model_path, "text")
-        ).collect()
+        processed_docs_acc = spark.sparkContext.accumulator(0)
+        processed_tokens_acc = spark.sparkContext.accumulator(0)
+        completed_partitions_acc = spark.sparkContext.accumulator(0)
+        stop_event = threading.Event()
+        progress_thread = threading.Thread(
+            target=monitor_token_count_progress,
+            args=(
+                stop_event,
+                total_docs,
+                total_partitions,
+                processed_docs_acc,
+                processed_tokens_acc,
+                completed_partitions_acc,
+                args.progress_interval_sec,
+            ),
+            daemon=True,
+        )
+        progress_thread.start()
 
-        print(f"DEBUG: Partition results: {partition_results}")
+        try:
+            partition_results = df.rdd.mapPartitions(
+                lambda iter: count_tokens_partition(
+                    iter,
+                    args.model_path,
+                    "text",
+                    processed_docs_acc,
+                    processed_tokens_acc,
+                    completed_partitions_acc,
+                )
+            ).collect()
+        finally:
+            stop_event.set()
+            progress_thread.join(timeout=1)
+
         total_tokens = sum(partition_results)
-        
+
         results["details"]["total_tokens"] = total_tokens
         results["details"]["total_tokens_human"] = format_number(total_tokens)
-        print(f"Total Tokens: {format_number(total_tokens)} ({total_tokens})")
+        log(
+            "Token count finished: "
+            f"partitions={int(completed_partitions_acc.value)}/{total_partitions}, "
+            f"docs={format_number(int(processed_docs_acc.value))}/{format_number(total_docs)}, "
+            f"tokens={format_number(total_tokens)} ({total_tokens})"
+        )
 
     if "sample" in args.tools:
         samples = df.limit(args.sample_n).collect()
@@ -160,12 +258,15 @@ if __name__ == "__main__":
     parser.add_argument("--model-path", type=str, default=None, help="HF model path")
     parser.add_argument("--tools", nargs="+", default=["sample", "count_tokens"], choices=["sample", "count_tokens"])
     parser.add_argument("--sample-n", type=int, default=3)
+    parser.add_argument("--progress-interval-sec", type=int, default=30,
+                        help="打印 token count 进度日志的时间间隔（秒）")
     
     args = parser.parse_args()
     
     conf = SparkConf()
     conf.set("spark.app.name", "Spark_Debug_Env")
     conf.set("spark.hadoop.mapreduce.input.fileinputformat.input.dir.recursive", "true")
+    conf.set("spark.ui.showConsoleProgress", "true")
     
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
 
