@@ -4,7 +4,7 @@ import time
 import os
 import sys
 import threading
-from typing import Iterator, Any
+from typing import Iterator, Any, Optional
 
 from pyspark import SparkConf
 from pyspark.sql import SparkSession
@@ -43,6 +43,12 @@ def format_number(num: int) -> str:
     if num < 1_000_000_000: return f"{num / 1_000_000:.2f}M"
     return f"{num / 1_000_000_000:.2f}B"
 
+def format_docs_progress(processed_docs: int, total_docs: Optional[int]) -> str:
+    if total_docs is None:
+        return f"docs={format_number(processed_docs)}"
+    doc_pct = (processed_docs / total_docs * 100.0) if total_docs else 0.0
+    return f"docs={format_number(processed_docs)}/{format_number(total_docs)} ({doc_pct:.1f}%)"
+
 def format_duration(seconds: float) -> str:
     total_seconds = int(seconds)
     hours, remainder = divmod(total_seconds, 3600)
@@ -54,7 +60,7 @@ def format_duration(seconds: float) -> str:
 
 def monitor_token_count_progress(
     stop_event: threading.Event,
-    total_docs: int,
+    total_docs: Optional[int],
     total_partitions: int,
     processed_docs_acc: Any,
     processed_tokens_acc: Any,
@@ -74,11 +80,10 @@ def monitor_token_count_progress(
             continue
         last_snapshot = snapshot
 
-        doc_pct = (processed_docs / total_docs * 100.0) if total_docs else 0.0
         log(
             "Token count progress: "
             f"partitions={completed_partitions}/{total_partitions}, "
-            f"docs={format_number(processed_docs)}/{format_number(total_docs)} ({doc_pct:.1f}%), "
+            f"{format_docs_progress(processed_docs, total_docs)}, "
             f"tokens={format_number(processed_tokens)}, "
             f"elapsed={format_duration(time.time() - started_at)}"
         )
@@ -174,11 +179,21 @@ def run_spark_analysis(spark: SparkSession, args):
         )
     else:
         df = df.select(F.col(target).alias("text").cast("string"))
-    df = df.cache()
     total_partitions = df.rdd.getNumPartitions()
-    total_docs = df.count()
-    log(f"Total documents loaded: {format_number(total_docs)}")
     log(f"Input partitions: {total_partitions}")
+
+    if args.cache_input:
+        log("Caching selected text DataFrame. Use this only when the selected data fits executor memory/disk.")
+        df = df.cache()
+    else:
+        log("Skipping DataFrame cache to avoid executor memory/disk pressure.")
+
+    total_docs = None
+    if args.count_total_docs:
+        total_docs = df.count()
+        log(f"Total documents loaded: {format_number(total_docs)}")
+    else:
+        log("Skipping total document pre-count; progress will report processed docs without a percentage.")
 
     results = {
         "meta": vars(args),
@@ -223,13 +238,17 @@ def run_spark_analysis(spark: SparkSession, args):
             progress_thread.join(timeout=1)
 
         total_tokens = sum(partition_results)
+        processed_docs = int(processed_docs_acc.value)
 
+        if total_docs is None:
+            results["total_docs"] = processed_docs
+        results["details"]["processed_docs"] = processed_docs
         results["details"]["total_tokens"] = total_tokens
         results["details"]["total_tokens_human"] = format_number(total_tokens)
         log(
             "Token count finished: "
             f"partitions={int(completed_partitions_acc.value)}/{total_partitions}, "
-            f"docs={format_number(int(processed_docs_acc.value))}/{format_number(total_docs)}, "
+            f"{format_docs_progress(processed_docs, total_docs)}, "
             f"tokens={format_number(total_tokens)} ({total_tokens})"
         )
 
@@ -260,6 +279,10 @@ if __name__ == "__main__":
     parser.add_argument("--sample-n", type=int, default=3)
     parser.add_argument("--progress-interval-sec", type=int, default=30,
                         help="打印 token count 进度日志的时间间隔（秒）")
+    parser.add_argument("--cache-input", action="store_true",
+                        help="缓存选出的 text DataFrame。40TB 级别默认不要开启。")
+    parser.add_argument("--count-total-docs", action="store_true",
+                        help="在 token count 前先全量 count 文档数。40TB 级别默认不要开启。")
     
     args = parser.parse_args()
     

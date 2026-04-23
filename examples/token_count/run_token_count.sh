@@ -48,6 +48,8 @@ TEXT_KEY=${TEXT_KEY:-"text"}
 # 若统计 stage2 (noborder) 输出,设为 "line_id" 即可按正文行号过滤后再统计
 LINE_ID_KEY=${LINE_ID_KEY:-""}
 PROGRESS_INTERVAL_SEC=${PROGRESS_INTERVAL_SEC:-"30"}
+CACHE_INPUT=${CACHE_INPUT:-"false"}
+COUNT_TOTAL_DOCS=${COUNT_TOTAL_DOCS:-"false"}
 
 # [Critical] Python Environment on Lustre (Must exist!)
 # 请修改为你解压后的真实路径
@@ -63,10 +65,22 @@ echo "Output: ${OUTPUT_PATH}"
 echo "TextKey: ${TEXT_KEY}"
 echo "LineIdKey: ${LINE_ID_KEY:-<none>}"
 echo "ProgressIntervalSec: ${PROGRESS_INTERVAL_SEC}"
+echo "CacheInput: ${CACHE_INPUT}"
+echo "CountTotalDocs: ${COUNT_TOTAL_DOCS}"
 
 LINE_ID_ARG=()
 if [ -n "${LINE_ID_KEY}" ]; then
     LINE_ID_ARG=(--line-id-key "${LINE_ID_KEY}")
+fi
+
+CACHE_INPUT_ARG=()
+if [[ "${CACHE_INPUT}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+    CACHE_INPUT_ARG=(--cache-input)
+fi
+
+COUNT_TOTAL_DOCS_ARG=()
+if [[ "${COUNT_TOTAL_DOCS}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+    COUNT_TOTAL_DOCS_ARG=(--count-total-docs)
 fi
 
 spark-submit \
@@ -99,6 +113,8 @@ spark-submit \
     --tools ${TOOLS} \
     --sample-n ${SAMPLE_N} \
     --progress-interval-sec "${PROGRESS_INTERVAL_SEC}" \
+    "${CACHE_INPUT_ARG[@]}" \
+    "${COUNT_TOTAL_DOCS_ARG[@]}" \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)
 
