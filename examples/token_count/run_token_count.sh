@@ -20,7 +20,7 @@ EXECUTOR_MEMORY_OVERHEAD="${EXECUTOR_MEMORY_OVERHEAD:-4G}"
 DEFAULT_PARALLELISM="${DEFAULT_PARALLELISM:-16}"
 
 # Log Configuration
-LOG_PATH=${LOG_PATH:-/work/projects/polyullm/wenjun/spark/logs/slurm}
+LOG_PATH=${LOG_PATH:-/work/projects/polyullm/lpx_log/spark/logs/slurm}
 mkdir -p ${LOG_PATH} # Ensure log directory exists
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_PATH}/spark-analysis-${TIMESTAMP}.log"
@@ -103,7 +103,7 @@ spark-submit \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size=1g \
     --conf spark.ui.showConsoleProgress=true \
-    --conf spark.local.dir="/work/projects/polyullm/wenjun/tmp" \
+    --conf spark.local.dir="/work/projects/polyullm/lpx_log/tmp" \
     tools/token_count.py \
     --input-path "${INPUT_PATH}" \
     --output-path "${OUTPUT_PATH}" \

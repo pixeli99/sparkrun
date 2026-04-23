@@ -12,7 +12,7 @@
 # 默认值定义
 DEFAULT_INPUT="/work/projects/polyullm/congkai/pretrain_data/Nemotron-CC-Math-v1/*/*.parquet"
 DEFAULT_OUTPUT="/work/projects/polyullm/wtf/data/Nemotron-CC-Math-v1-analysis/report.json"
-DEFAULT_LOG_PATH="/work/projects/polyullm/wenjun/spark/logs/slurm"
+DEFAULT_LOG_PATH="/work/projects/polyullm/lpx_log/spark/logs/slurm"
 DEFAULT_MODEL_PATH="/work/projects/polyullm/models/Qwen/Qwen2.5-0.5B"
 DEFAULT_TOOLS="sample count_tokens"
 DEFAULT_SAMPLE_N="5"
