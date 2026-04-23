@@ -22,6 +22,7 @@ sbatch --nodes=<number-of-nodes> submit.sh examples/token_count/config.sh exampl
 Key `config.sh` variables:
 - `TOOLS`: which tools to run, e.g. `sample count_tokens` or just `count_tokens` (space-separated).
 - `SAMPLE_N`: sample size when `sample` tool is enabled.
+- `PROGRESS_INTERVAL_SEC`: how often to print token-count progress logs on the driver.
 - `TEXT_KEY`: text column name (default `text`).
 - `LINE_ID_KEY`: 设为 `line_id` 时,脚本会解析该列的 JSON `{"line_id": [...]}`,只对被标记的正文行统计 token。用于 stage2 (noborder) 输出的 parquet。留空则统计整列 text。
 
@@ -43,6 +44,7 @@ sbatch --nodes=4 --export=ALL submit.sh examples/token_count/config.sh examples/
 ## Notes
 - Customize defaults in `config.sh` (or a copy) to match your data and model paths.
 - Logs follow `LOG_PATH` defined in the config/env; check `.log`/`.err` for issues.
+- During `count_tokens`, the driver now prints periodic progress lines with completed partitions, processed docs, and current cumulative tokens.
 - Output file (JSON) structure from `token_count.py`:
   - `meta`: the parsed CLI args/environment (input, output, model, tools, sample size, etc.).
   - `total_docs`: count of documents loaded.
