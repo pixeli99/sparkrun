@@ -26,11 +26,20 @@ NUM_PERM=${NUM_PERM:-"128"}
 B=${B:-"8"}
 R=${R:-"16"}
 
+# spark.local.dir 隔离到 per-job 子目录，避免并发 job 互相覆盖 shuffle spill
+SPARK_LOCAL_DIR=${SPARK_LOCAL_DIR:-"/lustre/projects/polyullm/lipengxiang_tmp/spark_local/${SLURM_JOB_ID:-default}"}
+mkdir -p "${SPARK_LOCAL_DIR}"
+
 LOG_PATH=${LOG_PATH:-/tmp/spark_logs}
 mkdir -p "${LOG_PATH}"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_PATH}/minhash-dedup-${TIMESTAMP}.log"
 ERR_FILE="${LOG_PATH}/minhash-dedup-${TIMESTAMP}.err"
+
+# 只在非空时把 --b / --r 传给 python，否则让脚本走 optimal_param 自动求解
+LSH_ARGS=""
+[[ -n "${B}" ]] && LSH_ARGS+=" --b ${B}"
+[[ -n "${R}" ]] && LSH_ARGS+=" --r ${R}"
 
 set +x
 
@@ -40,10 +49,11 @@ echo "  MASTER_URL: ${MASTER_URL}"
 echo "  INPUT_PATH: ${INPUT_PATH}"
 echo "  OUTPUT_PATH: ${OUTPUT_PATH}"
 echo "  TEXT_KEY: ${TEXT_KEY}  SCORE_KEY: ${SCORE_KEY}"
-echo "  THRESHOLD: ${THRESHOLD}  NUM_PERM: ${NUM_PERM}  B: ${B}  R: ${R}"
+echo "  THRESHOLD: ${THRESHOLD}  NUM_PERM: ${NUM_PERM}  B: ${B:-auto}  R: ${R:-auto}"
 echo "  EXECUTOR_CORES: ${EXECUTOR_CORES}  EXECUTOR_MEMORY: ${EXECUTOR_MEMORY}"
 echo "  DEFAULT_PARALLELISM: ${DEFAULT_PARALLELISM}"
 echo "  SQL_SHUFFLE_PARTITIONS: ${SQL_SHUFFLE_PARTITIONS}"
+echo "  SPARK_LOCAL_DIR: ${SPARK_LOCAL_DIR}"
 echo "  Driver stdout: ${LOG_FILE}"
 echo "  Driver stderr: ${ERR_FILE}"
 echo "------------------------------------------------"
@@ -72,7 +82,7 @@ spark-submit \
     --conf spark.shuffle.service.enabled=false \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size=4g \
-    --conf spark.local.dir="/lustre/projects/polyullm/lipengxiang_tmp/spark_local" \
+    --conf spark.local.dir="${SPARK_LOCAL_DIR}" \
     tools/minhash_dedup.py \
     --input_path "${INPUT_PATH}" \
     --output_path "${OUTPUT_PATH}" \
@@ -82,7 +92,7 @@ spark-submit \
     --ngram_size ${NGRAM_SIZE} \
     --min_length ${MIN_LENGTH} \
     --num_perm ${NUM_PERM} \
-    --b ${B} --r ${R} \
+    ${LSH_ARGS} \
     --num_parallel ${DEFAULT_PARALLELISM} \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)

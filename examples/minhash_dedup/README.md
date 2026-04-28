@@ -50,12 +50,15 @@ input parquet (递归扫嵌套子目录)
 ## How to Run
 
 ```bash
-sbatch --nodes=<N> submit.sh examples/minhash_dedup/config.sh examples/minhash_dedup/run_minhash_dedup.sh
+sbatch --nodes=<N≥2> submit.sh examples/minhash_dedup/config.sh examples/minhash_dedup/run_minhash_dedup.sh
 ```
 
-`submit.sh` 会自动起 Spark master + N-1 个 worker，`MASTER_URL` /
-`EXECUTOR_CORES` / `EXECUTOR_MEMORY` / `DEFAULT_PARALLELISM` 都根据
-SLURM 资源自动算出。
+`submit.sh` 用 head node 跑 Spark master、其余 N-1 个节点跑 worker。
+**`--nodes=1` 不可用**：worker_num 会变成 0 → `DEFAULT_PARALLELISM=0` →
+后续 spark-submit 直接炸。Smoke test 至少 `--nodes=2`，全量推荐 32+ 节点。
+
+`MASTER_URL` / `EXECUTOR_CORES` / `EXECUTOR_MEMORY` / `DEFAULT_PARALLELISM`
+都由 `submit.sh` 根据 SLURM 资源自动算出。
 
 ## Resource Sizing for 17TB Tokens
 
@@ -71,8 +74,11 @@ SLURM 资源自动算出。
 edge 数 ~ near-dup pair 数。如果 `dedup_ratio` 高（30%+），cluster 多、edge 多，
 WCC 内存可能吃紧 —— 那时把 `--num_parallel` 调大或加节点。
 
-`spark.local.dir` 指向 lustre：默认 `/lustre/projects/polyullm/lipengxiang_tmp/spark_local`，
-shuffle spill 写到这里，提交前确保有足够空间（数 TB 级）。
+`spark.local.dir` 指向 per-job 子目录：默认
+`/lustre/projects/polyullm/lipengxiang_tmp/spark_local/${SLURM_JOB_ID}`，
+shuffle spill 写到这里，每个 job 互不污染，跑完可以整个 rm 掉。
+提交前确保父目录所在 lustre pool 有数 TB 空闲。可通过 `SPARK_LOCAL_DIR`
+环境变量整体覆盖。
 
 ## Custom Config
 
@@ -90,13 +96,15 @@ sbatch --nodes=32 submit.sh examples/minhash_dedup/my_config.sh examples/minhash
 | `SCORE_KEY` | `stage3_score` | 质量分列名 |
 | `THRESHOLD` | `0.85` | jaccard 相似度阈值 |
 | `NUM_PERM` | `128` | MinHash 排列数 |
-| `B` | `8` | LSH bands |
-| `R` | `16` | LSH rows per band |
+| `B` | `8` | LSH bands；`B=""` 时按 `optimal_param` 自动求解 |
+| `R` | `16` | LSH rows per band；`R=""` 时同上 |
 | `NGRAM_SIZE` | `5` | n-gram 长度（chukonu 内部用） |
 | `MIN_LENGTH` | `2` | 最少 n-gram 数；过短文档被跳过 |
+| `SPARK_LOCAL_DIR` | `<lustre>/spark_local/${SLURM_JOB_ID}` | shuffle spill 目录，per-job 隔离 |
 
-`B * R = NUM_PERM` 是约束。如果改 threshold 不知怎么调 b/r，把 b/r 留空，脚本会
-按 `optimal_param` 自动求最优组合。
+`B * R = NUM_PERM` 是约束。如果不知怎么调 b/r，把 **两个都设成空串**
+（`export B=""; export R=""`），脚本不会把 `--b/--r` 传给 python，
+`optimal_param` 会按 (threshold, num_perm) 自动求最优组合。
 
 ## Output Schema
 

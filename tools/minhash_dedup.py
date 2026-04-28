@@ -154,14 +154,18 @@ def main():
         .option("recursiveFileLookup", "true")
         .parquet(args.input_path)
         .withColumn("__pri", build_priority(score_col, text_col))
+        # 加 sha256(text) 做 shuffle key，避免完整 text 作为 partition key
+        # 在 17TB 规模下产生数 TB 级的 shuffle 数据
+        .withColumn("__text_h", F.sha2(text_col, 256))
         .withColumn("uid", F.monotonically_increasing_id())
     )
 
     # ============================================================
     # 阶段 2: 文本完全相同的 group 先压成一条（priority-aware）
-    # 同 text 内：__exact_cnt 记录原始数量，选 priority 最高的留下
+    # 用 sha256 hash 作 partition key（比完整 text 小几个数量级），
+    # 同 hash 内：__exact_cnt 记录原始数量，选 priority 最高的留下
     # ============================================================
-    same_text_w = Window.partitionBy(args.text_key)
+    same_text_w = Window.partitionBy("__text_h")
     rank_w = same_text_w.orderBy(
         F.desc("__pri"), F.desc(F.length(text_col)), F.col("uid")
     )
@@ -170,7 +174,7 @@ def main():
         .withColumn("__exact_cnt", F.count("*").over(same_text_w))
         .withColumn("__exact_rk", F.row_number().over(rank_w))
         .filter(F.col("__exact_rk") == 1)
-        .drop("__exact_rk")
+        .drop("__exact_rk", "__text_h")
     )
     t0 = time.time()
     exact_deduped.write.mode("overwrite").parquet(exact_path)
