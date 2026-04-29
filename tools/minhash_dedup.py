@@ -17,8 +17,10 @@ Priority 公式与 datatrove QualityPriority 等价：
 
 import argparse
 import hashlib
+import logging
 import re
 import string
+import sys
 import time
 from itertools import tee
 from struct import unpack as byrunpack
@@ -39,6 +41,34 @@ NON_ALPHA = re.compile(r"\W", re.UNICODE)
 RNG = np.random.RandomState(SEED)
 MAX_HASH = np.uint64((1 << 32) - 1)
 MERSENNE_PRIME = np.uint64((1 << 61) - 1)
+
+
+# ----------------------------------------------------------------------
+# logging：所有阶段都打时间戳 + 关键计数；driver stdout 走 tee 进 LOG_FILE
+# ----------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+log = logging.getLogger("minhash_dedup")
+
+
+def fmt_dur(secs: float) -> str:
+    if secs < 60:
+        return f"{secs:.1f}s"
+    m, s = divmod(secs, 60)
+    if m < 60:
+        return f"{int(m)}m{s:.0f}s"
+    h, m = divmod(m, 60)
+    return f"{int(h)}h{int(m)}m{s:.0f}s"
+
+
+def banner(title: str) -> None:
+    log.info("=" * 64)
+    log.info(title)
+    log.info("=" * 64)
 
 
 def parse_args():
@@ -116,12 +146,17 @@ def normalize_text(content):
 
 def main():
     args = parse_args()
+    log.info("argv: %s", " ".join(sys.argv))
+    log.info("args: %s", vars(args))
 
     if args.b is None or args.r is None:
         B, R = optimal_param(args.threshold, args.num_perm)
+        log.info("B/R from optimal_param(threshold=%s, num_perm=%s)",
+                 args.threshold, args.num_perm)
     else:
         B, R = args.b, args.r
-    print(f"MinHash params: threshold={args.threshold} num_perm={args.num_perm} B={B} R={R}")
+    log.info("MinHash params : threshold=%s num_perm=%s B=%s R=%s ngram=%s min_len=%s",
+             args.threshold, args.num_perm, B, R, args.ngram_size, args.min_length)
 
     PERMUTATIONS = np.array(
         [
@@ -138,6 +173,25 @@ def main():
     conf.set("spark.app.name", "fineweb_minhash_dedup")
     conf.set("spark.debug.maxToStringFields", "100")
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
+    sc = spark.sparkContext
+
+    cfg = sc.getConf()
+    log.info("Spark version  : %s", spark.version)
+    log.info("master         : %s", sc.master)
+    log.info("applicationId  : %s", sc.applicationId)
+    log.info("driver web UI  : %s", sc.uiWebUrl)
+    for k in [
+        "spark.default.parallelism",
+        "spark.sql.shuffle.partitions",
+        "spark.sql.adaptive.enabled",
+        "spark.sql.adaptive.advisoryPartitionSizeInBytes",
+        "spark.executor.cores",
+        "spark.executor.memory",
+        "spark.executor.memoryOverhead",
+        "spark.local.dir",
+        "spark.plugins",
+    ]:
+        log.info("  %-50s = %s", k, cfg.get(k, "<unset>"))
 
     text_col = F.col(args.text_key)
     score_col = F.col(args.score_key)
@@ -145,10 +199,16 @@ def main():
     exact_path = args.output_path + "/exact"
     wcc_path = args.output_path + "/wcc"
     result_path = args.output_path + "/result"
+    log.info("input  path    : %s", args.input_path)
+    log.info("output path    : %s  (writes to {exact,wcc,result})", args.output_path)
+
+    pipeline_t0 = time.time()
 
     # ============================================================
     # 阶段 1: 读 parquet + 加 priority、uid
     # ============================================================
+    banner("Stage 1: read parquet + build priority/uid")
+    t0 = time.time()
     raw = (
         spark.read
         .option("recursiveFileLookup", "true")
@@ -159,12 +219,20 @@ def main():
         .withColumn("__text_h", F.sha2(text_col, 256))
         .withColumn("uid", F.monotonically_increasing_id())
     )
+    log.info("input partitions : %d", raw.rdd.getNumPartitions())
+    log.info("input schema:")
+    for f in raw.schema.fields:
+        log.info("  %-30s %s", f.name, f.dataType.simpleString())
+    log.info("[stage 1] plan built in %s (lazy, no scan yet)",
+             fmt_dur(time.time() - t0))
 
     # ============================================================
     # 阶段 2: 文本完全相同的 group 先压成一条（priority-aware）
     # 用 sha256 hash 作 partition key（比完整 text 小几个数量级），
     # 同 hash 内：__exact_cnt 记录原始数量，选 priority 最高的留下
     # ============================================================
+    banner("Stage 2: exact dedup (priority-aware, partitioned by sha256(text))")
+    t0 = time.time()
     same_text_w = Window.partitionBy("__text_h")
     rank_w = same_text_w.orderBy(
         F.desc("__pri"), F.desc(F.length(text_col)), F.col("uid")
@@ -176,17 +244,33 @@ def main():
         .filter(F.col("__exact_rk") == 1)
         .drop("__exact_rk", "__text_h")
     )
-    t0 = time.time()
+    log.info("writing -> %s", exact_path)
     exact_deduped.write.mode("overwrite").parquet(exact_path)
-    print(f"[stage 2] exact dedup written in {time.time() - t0:.1f}s")
+    log.info("[stage 2] exact dedup written in %s", fmt_dur(time.time() - t0))
 
+    # 读回来做统计：count() 走 parquet footer 几乎免费；
+    # sum(__exact_cnt) 一次扫描就能拿到原始 input 行数（不用重读输入）
     uid_df = spark.read.parquet(exact_path)
+    t0 = time.time()
+    s2 = uid_df.agg(
+        F.count(F.lit(1)).alias("n_exact"),
+        F.sum("__exact_cnt").alias("n_input"),
+    ).collect()[0]
+    n_exact = int(s2["n_exact"])
+    n_input = int(s2["n_input"] or 0)
+    log.info("[stage 2] stats scan in %s", fmt_dur(time.time() - t0))
+    log.info("  input rows         : %s", f"{n_input:,}")
+    log.info("  after exact dedup  : %s", f"{n_exact:,}")
+    log.info("  exact dedup ratio  : %.2f%%",
+             100.0 * (1 - n_exact / max(n_input, 1)))
 
     # ============================================================
     # 阶段 3: chukonu minhash → 候选相似边 (src, dst)
     # ============================================================
+    banner("Stage 3: chukonu minhash (LSH banding)")
     normal_udf = F.udf(normalize_text, StringType())
     records = uid_df.select(F.col("uid"), normal_udf(text_col).alias("content"))
+    log.info("records partitions : %d", records.rdd.getNumPartitions())
 
     minhash_schema = StructType([
         StructField("src", LongType(), False),
@@ -195,6 +279,7 @@ def main():
     perm0 = ",".join(str(it) for it in PERMUTATIONS[0])
     perm1 = ",".join(str(it) for it in PERMUTATIONS[1])
 
+    t0 = time.time()
     components = invoke(
         spark,
         f"{find_chukonu_lib_path()}/libminhash_chukonu_mod.so",
@@ -210,34 +295,57 @@ def main():
         ],
         minhash_schema,
     )
+    log.info("[stage 3] minhash plan built in %s "
+             "(chukonu .so loaded; compute fused into stage 4)",
+             fmt_dur(time.time() - t0))
 
     # ============================================================
     # 阶段 4: WCC → 每个非孤立节点 (vid, component)
     # ============================================================
+    banner("Stage 4: WCC (weakly connected components)")
     wcc_schema = StructType([
         StructField("vid", LongType(), False),
         StructField("component", LongType(), False),
     ])
     t0 = time.time()
-    wcc = invoke(
+    wcc_df = invoke(
         spark,
         f"{find_chukonu_lib_path()}/wcc.so",
         [components],
         [str(args.num_parallel)],
         wcc_schema,
     )
-    wcc.write.mode("overwrite").parquet(wcc_path)
-    print(f"[stage 4] WCC written in {time.time() - t0:.1f}s")
-    wcc = spark.read.parquet(wcc_path)
+    log.info("writing -> %s", wcc_path)
+    wcc_df.write.mode("overwrite").parquet(wcc_path)
+    log.info("[stage 4] minhash + WCC written in %s", fmt_dur(time.time() - t0))
+
+    wcc_df = spark.read.parquet(wcc_path)
+    t0 = time.time()
+    s4 = wcc_df.agg(
+        F.count(F.lit(1)).alias("n_nodes"),
+        F.approx_count_distinct("component").alias("n_clusters_approx"),
+    ).collect()[0]
+    n_wcc_nodes = int(s4["n_nodes"])
+    n_clusters_approx = int(s4["n_clusters_approx"])
+    log.info("[stage 4] stats scan in %s", fmt_dur(time.time() - t0))
+    log.info("  near-dup nodes        : %s", f"{n_wcc_nodes:,}")
+    log.info("  clusters (approx)     : %s", f"{n_clusters_approx:,}")
+    if n_clusters_approx > 0:
+        log.info("  avg cluster size      : %.2f",
+                 n_wcc_nodes / n_clusters_approx)
+    log.info("  near-dup coverage     : %.2f%% of exact-deduped set",
+             100.0 * n_wcc_nodes / max(n_exact, 1))
 
     # ============================================================
     # 阶段 5: cluster 内按 priority 选 keeper + 算 duplicate_count
     #   - 没在 wcc 里的 doc 是孤立点，自己一个 cluster
     #   - duplicate_count = sum(__exact_cnt) over cluster
     # ============================================================
+    banner("Stage 5: pick keeper per cluster + duplicate_count")
+    t0 = time.time()
     labeled = (
         uid_df.alias("d")
-        .join(wcc.alias("w"), F.col("d.uid") == F.col("w.vid"), "left")
+        .join(wcc_df.alias("w"), F.col("d.uid") == F.col("w.vid"), "left")
         .withColumn("__cluster", F.coalesce(F.col("w.component"), F.col("d.uid")))
         .drop("vid", "component")
     )
@@ -255,9 +363,40 @@ def main():
         .drop("__pri", "__rk", "uid", "__cluster", "__exact_cnt")
     )
 
-    t0 = time.time()
+    log.info("writing -> %s", result_path)
     deduped.write.mode("overwrite").parquet(result_path)
-    print(f"[stage 5] result written in {time.time() - t0:.1f}s")
+    log.info("[stage 5] result written in %s", fmt_dur(time.time() - t0))
+
+    # ============================================================
+    # 最终 sanity check：sum(duplicate_count) 必须 == 原始 input 行数
+    # ============================================================
+    banner("Sanity check")
+    res = spark.read.parquet(result_path)
+    t0 = time.time()
+    s5 = res.agg(
+        F.count(F.lit(1)).alias("n_kept"),
+        F.sum("duplicate_count").alias("n_sum"),
+        F.max("duplicate_count").alias("max_cluster"),
+        F.expr("percentile_approx(duplicate_count, 0.99)").alias("p99_cluster"),
+        F.expr("percentile_approx(duplicate_count, 0.5)").alias("p50_cluster"),
+    ).collect()[0]
+    n_kept = int(s5["n_kept"])
+    n_sum = int(s5["n_sum"] or 0)
+    log.info("sanity scan in %s", fmt_dur(time.time() - t0))
+    log.info("  input rows           : %s", f"{n_input:,}")
+    log.info("  after exact dedup    : %s", f"{n_exact:,}")
+    log.info("  final kept           : %s", f"{n_kept:,}")
+    log.info("  sum(dup_count)       : %s   (must equal input)", f"{n_sum:,}")
+    log.info("  sum == input ?       : %s", n_sum == n_input)
+    log.info("  exact   dedup ratio  : %.2f%%", 100.0 * (1 - n_exact / max(n_input, 1)))
+    log.info("  minhash dedup ratio  : %.2f%%", 100.0 * (1 - n_kept / max(n_exact, 1)))
+    log.info("  total   dedup ratio  : %.2f%%", 100.0 * (1 - n_kept / max(n_input, 1)))
+    log.info("  cluster size  p50    : %s", f"{int(s5['p50_cluster'] or 0):,}")
+    log.info("  cluster size  p99    : %s", f"{int(s5['p99_cluster'] or 0):,}")
+    log.info("  cluster size  max    : %s", f"{int(s5['max_cluster'] or 0):,}")
+    log.info("=" * 64)
+    log.info("ALL DONE. total elapsed: %s", fmt_dur(time.time() - pipeline_t0))
+    log.info("=" * 64)
 
     spark.stop()
 

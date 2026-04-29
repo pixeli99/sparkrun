@@ -68,7 +68,10 @@ spark-submit \
     --conf spark.sql.adaptive.enabled=true \
     --conf spark.sql.adaptive.coalescePartitions.enabled=true \
     --conf spark.sql.adaptive.skewJoin.enabled=true \
-    --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=256m \
+    --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=512m \
+    --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
+    --conf spark.sql.adaptive.coalescePartitions.minPartitionSize=128m \
+    --conf spark.sql.files.maxRecordsPerFile=2000000 \
     --conf spark.sql.files.ignoreCorruptFiles=true \
     --conf spark.plugins=org.pacman.chukonu.ChukonuPlugin \
     --conf spark.chukonu.enableNativeCodegen=true \
