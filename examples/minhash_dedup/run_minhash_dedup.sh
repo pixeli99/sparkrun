@@ -11,8 +11,10 @@ EXECUTOR_CORES="${EXECUTOR_CORES:-8}"
 EXECUTOR_MEMORY="${EXECUTOR_MEMORY:-64G}"
 EXECUTOR_MEMORY_OVERHEAD="${EXECUTOR_MEMORY_OVERHEAD:-8G}"
 DEFAULT_PARALLELISM="${DEFAULT_PARALLELISM:-256}"
-# shuffle 量大（minhash signature + WCC edges），开 4x 默认并行；AQE 会自动 coalesce
-SQL_SHUFFLE_PARTITIONS=$(awk "BEGIN {print int(${DEFAULT_PARALLELISM} * 4)}")
+# shuffle 量大（exact dedup + minhash signature + WCC edges），开 8x 默认并行；
+# 全量跑时可用 SQL_SHUFFLE_PARTITIONS 单独覆盖，AQE 会自动 coalesce
+SQL_SHUFFLE_PARTITIONS="${SQL_SHUFFLE_PARTITIONS:-$(awk "BEGIN {print int(${DEFAULT_PARALLELISM} * 8)}")}"
+WCC_PARALLELISM="${WCC_PARALLELISM:-${DEFAULT_PARALLELISM}}"
 
 INPUT_PATH=${INPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012"}
 OUTPUT_PATH=${OUTPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012_minhash"}
@@ -23,8 +25,15 @@ THRESHOLD=${THRESHOLD:-"0.85"}
 NGRAM_SIZE=${NGRAM_SIZE:-"5"}
 MIN_LENGTH=${MIN_LENGTH:-"2"}
 NUM_PERM=${NUM_PERM:-"128"}
-B=${B:-"8"}
-R=${R:-"16"}
+if [[ ! ${B+x} ]]; then
+    B="8"
+fi
+if [[ ! ${R+x} ]]; then
+    R="16"
+fi
+REUSE_EXACT="${REUSE_EXACT:-false}"
+REUSE_WCC="${REUSE_WCC:-false}"
+SKIP_EXACT_DEDUP="${SKIP_EXACT_DEDUP:-false}"
 
 # spark.local.dir 隔离到 per-job 子目录，避免并发 job 互相覆盖 shuffle spill
 SPARK_LOCAL_DIR=${SPARK_LOCAL_DIR:-"/lustre/projects/polyullm/lipengxiang_tmp/spark_local/${SLURM_JOB_ID:-default}"}
@@ -41,6 +50,19 @@ LSH_ARGS=""
 [[ -n "${B}" ]] && LSH_ARGS+=" --b ${B}"
 [[ -n "${R}" ]] && LSH_ARGS+=" --r ${R}"
 
+REUSE_ARGS=""
+case "${REUSE_EXACT}" in
+    1|true|TRUE|yes|YES) REUSE_ARGS+=" --reuse_exact" ;;
+esac
+case "${REUSE_WCC}" in
+    1|true|TRUE|yes|YES) REUSE_ARGS+=" --reuse_wcc" ;;
+esac
+
+EXACT_ARGS=""
+case "${SKIP_EXACT_DEDUP}" in
+    1|true|TRUE|yes|YES) EXACT_ARGS+=" --skip_exact_dedup" ;;
+esac
+
 set +x
 
 echo "------------------------------------------------"
@@ -53,6 +75,9 @@ echo "  THRESHOLD: ${THRESHOLD}  NUM_PERM: ${NUM_PERM}  B: ${B:-auto}  R: ${R:-a
 echo "  EXECUTOR_CORES: ${EXECUTOR_CORES}  EXECUTOR_MEMORY: ${EXECUTOR_MEMORY}"
 echo "  DEFAULT_PARALLELISM: ${DEFAULT_PARALLELISM}"
 echo "  SQL_SHUFFLE_PARTITIONS: ${SQL_SHUFFLE_PARTITIONS}"
+echo "  WCC_PARALLELISM: ${WCC_PARALLELISM}"
+echo "  REUSE_EXACT: ${REUSE_EXACT}  REUSE_WCC: ${REUSE_WCC}"
+echo "  SKIP_EXACT_DEDUP: ${SKIP_EXACT_DEDUP}"
 echo "  SPARK_LOCAL_DIR: ${SPARK_LOCAL_DIR}"
 echo "  Driver stdout: ${LOG_FILE}"
 echo "  Driver stderr: ${ERR_FILE}"
@@ -96,7 +121,9 @@ spark-submit \
     --min_length ${MIN_LENGTH} \
     --num_perm ${NUM_PERM} \
     ${LSH_ARGS} \
-    --num_parallel ${DEFAULT_PARALLELISM} \
+    ${EXACT_ARGS} \
+    ${REUSE_ARGS} \
+    --num_parallel ${WCC_PARALLELISM} \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)
 

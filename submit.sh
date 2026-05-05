@@ -56,6 +56,11 @@ sleep 5
 
 # number of nodes other than the head node
 worker_num=$((SLURM_JOB_NUM_NODES - 1))
+if (( worker_num < 1 )); then
+    echo "Error: Spark standalone mode needs at least 2 SLURM nodes: 1 master + >=1 worker."
+    echo "Submit with: sbatch --nodes=<N>=2 submit.sh <config.sh> <run_task.sh>"
+    exit 1
+fi
 
 for ((i = 1; i <= worker_num; i++)); do
     node_i=${nodes_array[$i]}

@@ -100,11 +100,25 @@ sbatch --nodes=32 submit.sh examples/minhash_dedup/my_config.sh examples/minhash
 | `R` | `16` | LSH rows per band；`R=""` 时同上 |
 | `NGRAM_SIZE` | `5` | n-gram 长度（chukonu 内部用） |
 | `MIN_LENGTH` | `2` | 最少 n-gram 数；过短文档被跳过 |
+| `SQL_SHUFFLE_PARTITIONS` | `DEFAULT_PARALLELISM * 8` | Spark SQL shuffle 分区数；全量 17TB 建议显式调到数万级 |
+| `WCC_PARALLELISM` | `DEFAULT_PARALLELISM` | 传给 chukonu WCC 的并行度 |
+| `SKIP_EXACT_DEDUP` | `false` | `true` 时跳过 stage 2 全局 exact dedup；快很多，但短文本完全重复不会在 exact 阶段合并 |
+| `REUSE_EXACT` | `false` | `true` 时若 `output_path/exact` 已存在则跳过 stage 1/2 |
+| `REUSE_WCC` | `false` | `true` 时若 `output_path/wcc` 已存在则跳过 stage 3/4 |
 | `SPARK_LOCAL_DIR` | `<lustre>/spark_local/${SLURM_JOB_ID}` | shuffle spill 目录，per-job 隔离 |
 
 `B * R = NUM_PERM` 是约束。如果不知怎么调 b/r，把 **两个都设成空串**
 （`export B=""; export R=""`），脚本不会把 `--b/--r` 传给 python，
 `optimal_param` 会按 (threshold, num_perm) 自动求最优组合。
+
+如果作业中途挂在后半段，不要从头覆盖已完成结果。确认
+`output_path/exact/_SUCCESS` 或 `output_path/wcc/_SUCCESS` 存在后，可以：
+
+```bash
+export REUSE_EXACT="true"
+export REUSE_WCC="true"   # 只在 wcc/ 已完整写完时打开
+sbatch --nodes=32 submit.sh examples/minhash_dedup/my_config.sh examples/minhash_dedup/run_minhash_dedup.sh
+```
 
 ## Output Schema
 

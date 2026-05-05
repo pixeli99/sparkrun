@@ -33,7 +33,6 @@ from chukonu.config import find_chukonu_lib_path
 from pyspark import SparkConf
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
-from pyspark.sql.window import Window
 from scipy.integrate import quad as integrate
 
 SEED = 42
@@ -93,6 +92,21 @@ def parse_args():
     )
     p.add_argument("--r", type=int, default=None, help="LSH rows per band；同上")
     p.add_argument("--num_parallel", type=int, default=3200, help="WCC 并行度")
+    p.add_argument(
+        "--skip_exact_dedup",
+        action="store_true",
+        help="跳过 stage 2 全局 exact dedup；更快但短文本完全重复不会在 exact 阶段合并",
+    )
+    p.add_argument(
+        "--reuse_exact",
+        action="store_true",
+        help="如果 output_path/exact 已存在，直接复用并跳过 stage 1/2",
+    )
+    p.add_argument(
+        "--reuse_wcc",
+        action="store_true",
+        help="如果 output_path/wcc 已存在，直接复用并跳过 stage 3/4",
+    )
     return p.parse_args()
 
 
@@ -142,6 +156,36 @@ def normalize_text(content):
     if content is None:
         return None
     return _NORM_PATTERN.sub(" ", unorm("NFKC", content.lower()))
+
+
+def struct_payload(cols):
+    return F.struct(*(F.col(c).alias(c) for c in cols))
+
+
+def keeper_order(text_key: str):
+    return F.struct(
+        F.col("__pri").alias("__pri"),
+        F.length(F.col(text_key)).alias("__text_len"),
+        (-F.col("uid")).alias("__neg_uid"),
+    )
+
+
+def keeper_order_from_len():
+    return F.struct(
+        F.col("__pri").alias("__pri"),
+        F.col("__text_len").alias("__text_len"),
+        (-F.col("uid")).alias("__neg_uid"),
+    )
+
+
+def path_exists(spark: SparkSession, path: str) -> bool:
+    hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
+    fs = spark.sparkContext._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
+    return fs.exists(spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path))
+
+
+def output_complete(spark: SparkSession, path: str) -> bool:
+    return path_exists(spark, path + "/_SUCCESS")
 
 
 def main():
@@ -204,49 +248,74 @@ def main():
 
     pipeline_t0 = time.time()
 
-    # ============================================================
-    # 阶段 1: 读 parquet + 加 priority、uid
-    # ============================================================
-    banner("Stage 1: read parquet + build priority/uid")
-    t0 = time.time()
-    raw = (
-        spark.read
-        .option("recursiveFileLookup", "true")
-        .parquet(args.input_path)
-        .withColumn("__pri", build_priority(score_col, text_col))
-        # 加 sha256(text) 做 shuffle key，避免完整 text 作为 partition key
-        # 在 17TB 规模下产生数 TB 级的 shuffle 数据
-        .withColumn("__text_h", F.sha2(text_col, 256))
-        .withColumn("uid", F.monotonically_increasing_id())
-    )
-    log.info("input partitions : %d", raw.rdd.getNumPartitions())
-    log.info("input schema:")
-    for f in raw.schema.fields:
-        log.info("  %-30s %s", f.name, f.dataType.simpleString())
-    log.info("[stage 1] plan built in %s (lazy, no scan yet)",
-             fmt_dur(time.time() - t0))
+    if args.reuse_exact and output_complete(spark, exact_path):
+        banner("Stage 1/2: reuse exact dedup output")
+        log.info("reusing -> %s", exact_path)
+    else:
+        # ============================================================
+        # 阶段 1: 读 parquet + 加 priority、uid
+        # ============================================================
+        banner("Stage 1: read parquet + build priority/uid")
+        t0 = time.time()
+        raw = (
+            spark.read
+            .option("recursiveFileLookup", "true")
+            .parquet(args.input_path)
+            .withColumn("__pri", build_priority(score_col, text_col))
+            # 加 sha256(text) 做 shuffle key，避免完整 text 作为 partition key
+            # 在 17TB 规模下产生数 TB 级的 shuffle 数据
+            .withColumn("__text_h", F.sha2(text_col, 256))
+            .withColumn("uid", F.monotonically_increasing_id())
+        )
+        log.info("input partitions : %d", raw.rdd.getNumPartitions())
+        log.info("input schema:")
+        for f in raw.schema.fields:
+            log.info("  %-30s %s", f.name, f.dataType.simpleString())
+        log.info("[stage 1] plan built in %s (lazy, no scan yet)",
+                 fmt_dur(time.time() - t0))
 
-    # ============================================================
-    # 阶段 2: 文本完全相同的 group 先压成一条（priority-aware）
-    # 用 sha256 hash 作 partition key（比完整 text 小几个数量级），
-    # 同 hash 内：__exact_cnt 记录原始数量，选 priority 最高的留下
-    # ============================================================
-    banner("Stage 2: exact dedup (priority-aware, partitioned by sha256(text))")
-    t0 = time.time()
-    same_text_w = Window.partitionBy("__text_h")
-    rank_w = same_text_w.orderBy(
-        F.desc("__pri"), F.desc(F.length(text_col)), F.col("uid")
-    )
-    exact_deduped = (
-        raw
-        .withColumn("__exact_cnt", F.count("*").over(same_text_w))
-        .withColumn("__exact_rk", F.row_number().over(rank_w))
-        .filter(F.col("__exact_rk") == 1)
-        .drop("__exact_rk", "__text_h")
-    )
-    log.info("writing -> %s", exact_path)
-    exact_deduped.write.mode("overwrite").parquet(exact_path)
-    log.info("[stage 2] exact dedup written in %s", fmt_dur(time.time() - t0))
+        # ============================================================
+        # 阶段 2: 文本完全相同的 group 先压成一条（priority-aware）
+        # 用 sha256 hash 作 partition key（比完整 text 小几个数量级），
+        # 同 hash 内：__exact_cnt 记录原始数量，选 priority 最高的留下
+        # ============================================================
+        banner("Stage 2: exact dedup (priority-aware, partitioned by sha256(text))")
+        t0 = time.time()
+        if args.skip_exact_dedup:
+            log.warning("skip_exact_dedup enabled: writing one row per input doc with __exact_cnt=1")
+            exact_deduped = raw.drop("__text_h").withColumn("__exact_cnt", F.lit(1))
+        else:
+            # Keep the shuffle narrow: only move fixed-width keys while choosing the
+            # keeper uid, then join back to the wide input row after aggregation.
+            exact_keeper = (
+                raw
+                .select(
+                    "__text_h",
+                    "__pri",
+                    F.length(text_col).alias("__text_len"),
+                    "uid",
+                )
+                .groupBy("__text_h")
+                .agg(
+                    F.count(F.lit(1)).alias("__exact_cnt"),
+                    F.max_by(
+                        F.struct(F.col("uid").alias("uid")),
+                        keeper_order_from_len(),
+                    ).alias("__keeper"),
+                )
+                .select(
+                    F.col("__keeper.uid").alias("uid"),
+                    "__exact_cnt",
+                )
+            )
+            exact_deduped = (
+                raw
+                .drop("__text_h")
+                .join(exact_keeper, "uid", "inner")
+            )
+        log.info("writing -> %s", exact_path)
+        exact_deduped.write.mode("overwrite").parquet(exact_path)
+        log.info("[stage 2] exact dedup written in %s", fmt_dur(time.time() - t0))
 
     # 读回来做统计：count() 走 parquet footer 几乎免费；
     # sum(__exact_cnt) 一次扫描就能拿到原始 input 行数（不用重读输入）
@@ -264,60 +333,64 @@ def main():
     log.info("  exact dedup ratio  : %.2f%%",
              100.0 * (1 - n_exact / max(n_input, 1)))
 
-    # ============================================================
-    # 阶段 3: chukonu minhash → 候选相似边 (src, dst)
-    # ============================================================
-    banner("Stage 3: chukonu minhash (LSH banding)")
-    normal_udf = F.udf(normalize_text, StringType())
-    records = uid_df.select(F.col("uid"), normal_udf(text_col).alias("content"))
-    log.info("records partitions : %d", records.rdd.getNumPartitions())
+    if args.reuse_wcc and output_complete(spark, wcc_path):
+        banner("Stage 3/4: reuse WCC output")
+        log.info("reusing -> %s", wcc_path)
+    else:
+        # ============================================================
+        # 阶段 3: chukonu minhash → 候选相似边 (src, dst)
+        # ============================================================
+        banner("Stage 3: chukonu minhash (LSH banding)")
+        normal_udf = F.udf(normalize_text, StringType())
+        records = uid_df.select(F.col("uid"), normal_udf(text_col).alias("content"))
+        log.info("records partitions : %d", records.rdd.getNumPartitions())
 
-    minhash_schema = StructType([
-        StructField("src", LongType(), False),
-        StructField("dst", LongType(), False),
-    ])
-    perm0 = ",".join(str(it) for it in PERMUTATIONS[0])
-    perm1 = ",".join(str(it) for it in PERMUTATIONS[1])
+        minhash_schema = StructType([
+            StructField("src", LongType(), False),
+            StructField("dst", LongType(), False),
+        ])
+        perm0 = ",".join(str(it) for it in PERMUTATIONS[0])
+        perm1 = ",".join(str(it) for it in PERMUTATIONS[1])
 
-    t0 = time.time()
-    components = invoke(
-        spark,
-        f"{find_chukonu_lib_path()}/libminhash_chukonu_mod.so",
-        [records],
-        [
-            str(B),
-            str(R),
-            str(args.num_perm),
-            str(args.ngram_size),
-            str(args.min_length),
-            perm0,
-            perm1,
-        ],
-        minhash_schema,
-    )
-    log.info("[stage 3] minhash plan built in %s "
-             "(chukonu .so loaded; compute fused into stage 4)",
-             fmt_dur(time.time() - t0))
+        t0 = time.time()
+        components = invoke(
+            spark,
+            f"{find_chukonu_lib_path()}/libminhash_chukonu_mod.so",
+            [records],
+            [
+                str(B),
+                str(R),
+                str(args.num_perm),
+                str(args.ngram_size),
+                str(args.min_length),
+                perm0,
+                perm1,
+            ],
+            minhash_schema,
+        )
+        log.info("[stage 3] minhash plan built in %s "
+                 "(chukonu .so loaded; compute fused into stage 4)",
+                 fmt_dur(time.time() - t0))
 
-    # ============================================================
-    # 阶段 4: WCC → 每个非孤立节点 (vid, component)
-    # ============================================================
-    banner("Stage 4: WCC (weakly connected components)")
-    wcc_schema = StructType([
-        StructField("vid", LongType(), False),
-        StructField("component", LongType(), False),
-    ])
-    t0 = time.time()
-    wcc_df = invoke(
-        spark,
-        f"{find_chukonu_lib_path()}/wcc.so",
-        [components],
-        [str(args.num_parallel)],
-        wcc_schema,
-    )
-    log.info("writing -> %s", wcc_path)
-    wcc_df.write.mode("overwrite").parquet(wcc_path)
-    log.info("[stage 4] minhash + WCC written in %s", fmt_dur(time.time() - t0))
+        # ============================================================
+        # 阶段 4: WCC → 每个非孤立节点 (vid, component)
+        # ============================================================
+        banner("Stage 4: WCC (weakly connected components)")
+        wcc_schema = StructType([
+            StructField("vid", LongType(), False),
+            StructField("component", LongType(), False),
+        ])
+        t0 = time.time()
+        wcc_df = invoke(
+            spark,
+            f"{find_chukonu_lib_path()}/wcc.so",
+            [components],
+            [str(args.num_parallel)],
+            wcc_schema,
+        )
+        log.info("writing -> %s", wcc_path)
+        wcc_df.write.mode("overwrite").parquet(wcc_path)
+        log.info("[stage 4] minhash + WCC written in %s", fmt_dur(time.time() - t0))
 
     wcc_df = spark.read.parquet(wcc_path)
     t0 = time.time()
@@ -343,25 +416,32 @@ def main():
     # ============================================================
     banner("Stage 5: pick keeper per cluster + duplicate_count")
     t0 = time.time()
-    labeled = (
-        uid_df.alias("d")
-        .join(wcc_df.alias("w"), F.col("d.uid") == F.col("w.vid"), "left")
-        .withColumn("__cluster", F.coalesce(F.col("w.component"), F.col("d.uid")))
-        .drop("vid", "component")
+    output_cols = [c for c in uid_df.columns if c not in {"__pri", "uid", "__exact_cnt"}]
+    wcc_nodes = wcc_df.select("vid")
+    near_docs = (
+        uid_df
+        .join(wcc_df, F.col("uid") == F.col("vid"), "inner")
+        .drop("vid")
     )
-
-    cluster_w = Window.partitionBy("__cluster")
-    keep_w = cluster_w.orderBy(
-        F.desc("__pri"), F.desc(F.length(text_col)), F.col("uid")
+    near_deduped = (
+        near_docs
+        .groupBy("component")
+        .agg(
+            F.sum("__exact_cnt").alias("duplicate_count"),
+            F.max_by(
+                struct_payload(output_cols),
+                keeper_order(args.text_key),
+            ).alias("__keeper"),
+        )
+        .select("__keeper.*", "duplicate_count")
     )
-
-    deduped = (
-        labeled
-        .withColumn("duplicate_count", F.sum("__exact_cnt").over(cluster_w))
-        .withColumn("__rk", F.row_number().over(keep_w))
-        .filter(F.col("__rk") == 1)
-        .drop("__pri", "__rk", "uid", "__cluster", "__exact_cnt")
+    isolated_deduped = (
+        uid_df
+        .join(wcc_nodes, F.col("uid") == F.col("vid"), "left_anti")
+        .withColumn("duplicate_count", F.col("__exact_cnt"))
+        .select(*output_cols, "duplicate_count")
     )
+    deduped = near_deduped.unionByName(isolated_deduped)
 
     log.info("writing -> %s", result_path)
     deduped.write.mode("overwrite").parquet(result_path)
