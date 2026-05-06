@@ -244,13 +244,25 @@ def main():
     wcc_path = args.output_path + "/wcc"
     result_path = args.output_path + "/result"
     log.info("input  path    : %s", args.input_path)
-    log.info("output path    : %s  (writes to {exact,wcc,result})", args.output_path)
+    if args.skip_exact_dedup:
+        log.info("output path    : %s  (writes to {wcc,result}; exact skipped)", args.output_path)
+        if args.reuse_exact:
+            log.warning("reuse_exact ignored because skip_exact_dedup does not write exact/")
+            args.reuse_exact = False
+        if args.reuse_wcc:
+            log.warning("reuse_wcc ignored because skip_exact_dedup does not materialize a reusable uid mapping")
+            args.reuse_wcc = False
+    else:
+        log.info("output path    : %s  (writes to {exact,wcc,result})", args.output_path)
 
     pipeline_t0 = time.time()
+    n_exact = None
+    n_input = None
 
-    if args.reuse_exact and output_complete(spark, exact_path):
+    if (not args.skip_exact_dedup) and args.reuse_exact and output_complete(spark, exact_path):
         banner("Stage 1/2: reuse exact dedup output")
         log.info("reusing -> %s", exact_path)
+        uid_df = spark.read.parquet(exact_path)
     else:
         # ============================================================
         # 阶段 1: 读 parquet + 加 priority、uid
@@ -279,12 +291,15 @@ def main():
         # 用 sha256 hash 作 partition key（比完整 text 小几个数量级），
         # 同 hash 内：__exact_cnt 记录原始数量，选 priority 最高的留下
         # ============================================================
-        banner("Stage 2: exact dedup (priority-aware, partitioned by sha256(text))")
         t0 = time.time()
         if args.skip_exact_dedup:
-            log.warning("skip_exact_dedup enabled: writing one row per input doc with __exact_cnt=1")
-            exact_deduped = raw.drop("__text_h").withColumn("__exact_cnt", F.lit(1))
+            banner("Stage 2: skip exact dedup (no exact checkpoint write)")
+            log.warning("skip_exact_dedup enabled: keeping one row per input doc with __exact_cnt=1")
+            uid_df = raw.drop("__text_h").withColumn("__exact_cnt", F.lit(1))
+            log.info("[stage 2] exact dedup skipped in %s; no exact/ output written",
+                     fmt_dur(time.time() - t0))
         else:
+            banner("Stage 2: exact dedup (priority-aware, partitioned by sha256(text))")
             # Keep the shuffle narrow: only move fixed-width keys while choosing the
             # keeper uid, then join back to the wide input row after aggregation.
             exact_keeper = (
@@ -313,25 +328,29 @@ def main():
                 .drop("__text_h")
                 .join(exact_keeper, "uid", "inner")
             )
-        log.info("writing -> %s", exact_path)
-        exact_deduped.write.mode("overwrite").parquet(exact_path)
-        log.info("[stage 2] exact dedup written in %s", fmt_dur(time.time() - t0))
+            log.info("writing -> %s", exact_path)
+            exact_deduped.write.mode("overwrite").parquet(exact_path)
+            log.info("[stage 2] exact dedup written in %s", fmt_dur(time.time() - t0))
+            uid_df = spark.read.parquet(exact_path)
 
-    # 读回来做统计：count() 走 parquet footer 几乎免费；
-    # sum(__exact_cnt) 一次扫描就能拿到原始 input 行数（不用重读输入）
-    uid_df = spark.read.parquet(exact_path)
-    t0 = time.time()
-    s2 = uid_df.agg(
-        F.count(F.lit(1)).alias("n_exact"),
-        F.sum("__exact_cnt").alias("n_input"),
-    ).collect()[0]
-    n_exact = int(s2["n_exact"])
-    n_input = int(s2["n_input"] or 0)
-    log.info("[stage 2] stats scan in %s", fmt_dur(time.time() - t0))
-    log.info("  input rows         : %s", f"{n_input:,}")
-    log.info("  after exact dedup  : %s", f"{n_exact:,}")
-    log.info("  exact dedup ratio  : %.2f%%",
-             100.0 * (1 - n_exact / max(n_input, 1)))
+    if args.skip_exact_dedup:
+        log.info("[stage 2] stats scan skipped to avoid an extra full input pass")
+        log.info("  after exact dedup  : same as input (exact dedup disabled)")
+    else:
+        # 读回来做统计：count() 走 parquet footer 几乎免费；
+        # sum(__exact_cnt) 一次扫描就能拿到原始 input 行数（不用重读输入）
+        t0 = time.time()
+        s2 = uid_df.agg(
+            F.count(F.lit(1)).alias("n_exact"),
+            F.sum("__exact_cnt").alias("n_input"),
+        ).collect()[0]
+        n_exact = int(s2["n_exact"])
+        n_input = int(s2["n_input"] or 0)
+        log.info("[stage 2] stats scan in %s", fmt_dur(time.time() - t0))
+        log.info("  input rows         : %s", f"{n_input:,}")
+        log.info("  after exact dedup  : %s", f"{n_exact:,}")
+        log.info("  exact dedup ratio  : %.2f%%",
+                 100.0 * (1 - n_exact / max(n_input, 1)))
 
     if args.reuse_wcc and output_complete(spark, wcc_path):
         banner("Stage 3/4: reuse WCC output")
@@ -406,8 +425,11 @@ def main():
     if n_clusters_approx > 0:
         log.info("  avg cluster size      : %.2f",
                  n_wcc_nodes / n_clusters_approx)
-    log.info("  near-dup coverage     : %.2f%% of exact-deduped set",
-             100.0 * n_wcc_nodes / max(n_exact, 1))
+    if n_exact is None:
+        log.info("  near-dup coverage     : not computed (input count skipped)")
+    else:
+        log.info("  near-dup coverage     : %.2f%% of exact-deduped set",
+                 100.0 * n_wcc_nodes / max(n_exact, 1))
 
     # ============================================================
     # 阶段 5: cluster 内按 priority 选 keeper + 算 duplicate_count
@@ -462,15 +484,31 @@ def main():
     ).collect()[0]
     n_kept = int(s5["n_kept"])
     n_sum = int(s5["n_sum"] or 0)
+    reported_n_input = n_input if n_input is not None else n_sum
+    reported_n_exact = n_exact if n_exact is not None else n_sum
     log.info("sanity scan in %s", fmt_dur(time.time() - t0))
-    log.info("  input rows           : %s", f"{n_input:,}")
-    log.info("  after exact dedup    : %s", f"{n_exact:,}")
+    if n_input is None:
+        log.info("  input rows           : %s   (from sum(duplicate_count); pre-count skipped)",
+                 f"{n_sum:,}")
+    else:
+        log.info("  input rows           : %s", f"{n_input:,}")
+    if n_exact is None:
+        log.info("  after exact dedup    : %s   (exact dedup skipped)", f"{n_sum:,}")
+    else:
+        log.info("  after exact dedup    : %s", f"{n_exact:,}")
     log.info("  final kept           : %s", f"{n_kept:,}")
-    log.info("  sum(dup_count)       : %s   (must equal input)", f"{n_sum:,}")
-    log.info("  sum == input ?       : %s", n_sum == n_input)
-    log.info("  exact   dedup ratio  : %.2f%%", 100.0 * (1 - n_exact / max(n_input, 1)))
-    log.info("  minhash dedup ratio  : %.2f%%", 100.0 * (1 - n_kept / max(n_exact, 1)))
-    log.info("  total   dedup ratio  : %.2f%%", 100.0 * (1 - n_kept / max(n_input, 1)))
+    if n_input is None:
+        log.info("  sum(dup_count)       : %s", f"{n_sum:,}")
+        log.info("  sum == input ?       : not pre-checked (input count skipped)")
+    else:
+        log.info("  sum(dup_count)       : %s   (must equal input)", f"{n_sum:,}")
+        log.info("  sum == input ?       : %s", n_sum == n_input)
+    log.info("  exact   dedup ratio  : %.2f%%",
+             100.0 * (1 - reported_n_exact / max(reported_n_input, 1)))
+    log.info("  minhash dedup ratio  : %.2f%%",
+             100.0 * (1 - n_kept / max(reported_n_exact, 1)))
+    log.info("  total   dedup ratio  : %.2f%%",
+             100.0 * (1 - n_kept / max(reported_n_input, 1)))
     log.info("  cluster size  p50    : %s", f"{int(s5['p50_cluster'] or 0):,}")
     log.info("  cluster size  p99    : %s", f"{int(s5['p99_cluster'] or 0):,}")
     log.info("  cluster size  max    : %s", f"{int(s5['max_cluster'] or 0):,}")
