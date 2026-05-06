@@ -16,7 +16,7 @@ workdir=$(pwd)
 tmp_dir=/work/projects/polyullm/lipengxiang_tmp/tmp/spark-${SLURM_JOB_ID}
 cache_dir=$tmp_dir/chukonu_cache
 container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-jdk11-2026010601.sqsh
-container_name=chukonu+3.4.1-jdk11-2026010601
+container_name=chukonu-spark-${SLURM_JOB_ID:-manual}
 container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
 # ========================================================
 
@@ -29,10 +29,12 @@ head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
 
 # Start Spark Master
-port=7077
+port=$((17077 + (${SLURM_JOB_ID:-0} % 20000)))
+master_webui_port=$((28031 + (${SLURM_JOB_ID:-0} % 20000)))
 ip_head=$head_node_ip:$port
 export ip_head
 echo "IP Head: $ip_head"
+echo "Master web UI port: $master_webui_port"
 
 # create tmp folder
 mkdir -p ${tmp_dir}
@@ -42,15 +44,16 @@ mkdir -p ${cache_dir}
 printenv
 
 echo "Starting Spark Master at $head_node"
-mkdir -p ${tmp_dir}/${head_node}
+mkdir -p ${tmp_dir}/${head_node}/{tmp,logs,work}
 chmod -R 777 ${tmp_dir}/${head_node}
+head_mounts=${container_mounts},${tmp_dir}/${head_node}/tmp:/tmp,${tmp_dir}/${head_node}/logs:/opt/spark/logs,${tmp_dir}/${head_node}/work:/opt/spark/work
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     --container-name=$container_name \
-    --container-mounts=$container_mounts,${tmp_dir}/${head_node}:/tmp,${tmp_dir}/${head_node}:/opt/spark/logs \
+    --container-mounts=$head_mounts \
     --container-image=$container_image \
     --container-writable \
     --container-remap-root \
-    bash -c "bash /opt/spark/sbin/start-master.sh -h $head_node_ip  --webui-port 8031  && tail -f /dev/null" &
+    bash -c "bash /opt/spark/sbin/start-master.sh -h $head_node_ip --port $port --webui-port $master_webui_port && tail -f /dev/null" &
 
 sleep 5
 
@@ -65,16 +68,17 @@ fi
 for ((i = 1; i <= worker_num; i++)); do
     node_i=${nodes_array[$i]}
     echo "create tmp folder"
-    mkdir -p ${tmp_dir}/${node_i}
+    mkdir -p ${tmp_dir}/${node_i}/{tmp,logs,work}
     chmod -R 777 ${tmp_dir}/${node_i}
+    worker_mounts=${container_mounts},${tmp_dir}/${node_i}/tmp:/tmp,${tmp_dir}/${node_i}/logs:/opt/spark/logs,${tmp_dir}/${node_i}/work:/opt/spark/work
     echo "Starting Spark Worker $i at $node_i"
     srun --nodes=1 --ntasks=1 -w "$node_i" \
         --container-name=$container_name \
-        --container-mounts=$container_mounts,${tmp_dir}/${head_node}:/tmp,${tmp_dir}/${head_node}:/opt/spark/logs \
+        --container-mounts=$worker_mounts \
         --container-image=$container_image \
         --container-writable \
         --container-remap-root \
-        bash -c "bash /opt/spark/sbin/start-worker.sh spark://$head_node_ip:$port  && tail -f /dev/null" &
+        bash -c "bash /opt/spark/sbin/start-worker.sh -d /opt/spark/work spark://$head_node_ip:$port && tail -f /dev/null" &
         sleep 5
 done
 
