@@ -10,11 +10,23 @@ set -x
 EXECUTOR_CORES="${EXECUTOR_CORES:-8}"
 EXECUTOR_MEMORY="${EXECUTOR_MEMORY:-64G}"
 EXECUTOR_MEMORY_OVERHEAD="${EXECUTOR_MEMORY_OVERHEAD:-8G}"
+DRIVER_MEMORY="${DRIVER_MEMORY:-64G}"
+DRIVER_CORES="${DRIVER_CORES:-4}"
 DEFAULT_PARALLELISM="${DEFAULT_PARALLELISM:-256}"
 # shuffle 量大（exact dedup + minhash signature + WCC edges），开 8x 默认并行；
 # 全量跑时可用 SQL_SHUFFLE_PARTITIONS 单独覆盖，AQE 会自动 coalesce
 SQL_SHUFFLE_PARTITIONS="${SQL_SHUFFLE_PARTITIONS:-$(awk "BEGIN {print int(${DEFAULT_PARALLELISM} * 8)}")}"
 WCC_PARALLELISM="${WCC_PARALLELISM:-${DEFAULT_PARALLELISM}}"
+
+# driver 侧的 AppStatusListener 会保留 task/stage metrics；全量输入有几十万 task，
+# 默认 Spark UI/status retention 很容易把 driver heap 打爆。
+SPARK_UI_RETAINED_TASKS="${SPARK_UI_RETAINED_TASKS:-1000}"
+SPARK_UI_RETAINED_STAGES="${SPARK_UI_RETAINED_STAGES:-50}"
+SPARK_UI_RETAINED_JOBS="${SPARK_UI_RETAINED_JOBS:-50}"
+SPARK_SQL_UI_RETAINED_EXECUTIONS="${SPARK_SQL_UI_RETAINED_EXECUTIONS:-20}"
+SPARK_UI_TIMELINE_TASKS_MAXIMUM="${SPARK_UI_TIMELINE_TASKS_MAXIMUM:-1000}"
+SPARK_EXECUTOR_HEARTBEAT_INTERVAL="${SPARK_EXECUTOR_HEARTBEAT_INTERVAL:-60s}"
+SPARK_NETWORK_TIMEOUT="${SPARK_NETWORK_TIMEOUT:-600s}"
 
 INPUT_PATH=${INPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012"}
 OUTPUT_PATH=${OUTPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012_minhash"}
@@ -73,9 +85,14 @@ echo "  OUTPUT_PATH: ${OUTPUT_PATH}"
 echo "  TEXT_KEY: ${TEXT_KEY}  SCORE_KEY: ${SCORE_KEY}"
 echo "  THRESHOLD: ${THRESHOLD}  NUM_PERM: ${NUM_PERM}  B: ${B:-auto}  R: ${R:-auto}"
 echo "  EXECUTOR_CORES: ${EXECUTOR_CORES}  EXECUTOR_MEMORY: ${EXECUTOR_MEMORY}"
+echo "  DRIVER_CORES: ${DRIVER_CORES}  DRIVER_MEMORY: ${DRIVER_MEMORY}"
 echo "  DEFAULT_PARALLELISM: ${DEFAULT_PARALLELISM}"
 echo "  SQL_SHUFFLE_PARTITIONS: ${SQL_SHUFFLE_PARTITIONS}"
 echo "  WCC_PARALLELISM: ${WCC_PARALLELISM}"
+echo "  SPARK_UI_RETAINED_TASKS: ${SPARK_UI_RETAINED_TASKS}"
+echo "  SPARK_SQL_UI_RETAINED_EXECUTIONS: ${SPARK_SQL_UI_RETAINED_EXECUTIONS}"
+echo "  SPARK_EXECUTOR_HEARTBEAT_INTERVAL: ${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}"
+echo "  SPARK_NETWORK_TIMEOUT: ${SPARK_NETWORK_TIMEOUT}"
 echo "  REUSE_EXACT: ${REUSE_EXACT}  REUSE_WCC: ${REUSE_WCC}"
 echo "  SKIP_EXACT_DEDUP: ${SKIP_EXACT_DEDUP}"
 echo "  SPARK_LOCAL_DIR: ${SPARK_LOCAL_DIR}"
@@ -85,11 +102,20 @@ echo "------------------------------------------------"
 
 spark-submit \
     --master ${MASTER_URL} \
+    --driver-memory ${DRIVER_MEMORY} \
+    --driver-cores ${DRIVER_CORES} \
     --executor-cores ${EXECUTOR_CORES} \
     --executor-memory ${EXECUTOR_MEMORY} \
     --conf spark.executor.memoryOverhead=${EXECUTOR_MEMORY_OVERHEAD} \
     --conf spark.default.parallelism=${DEFAULT_PARALLELISM} \
     --conf spark.sql.shuffle.partitions=${SQL_SHUFFLE_PARTITIONS} \
+    --conf spark.ui.retainedTasks=${SPARK_UI_RETAINED_TASKS} \
+    --conf spark.ui.retainedStages=${SPARK_UI_RETAINED_STAGES} \
+    --conf spark.ui.retainedJobs=${SPARK_UI_RETAINED_JOBS} \
+    --conf spark.sql.ui.retainedExecutions=${SPARK_SQL_UI_RETAINED_EXECUTIONS} \
+    --conf spark.ui.timeline.tasks.maximum=${SPARK_UI_TIMELINE_TASKS_MAXIMUM} \
+    --conf spark.executor.heartbeatInterval=${SPARK_EXECUTOR_HEARTBEAT_INTERVAL} \
+    --conf spark.network.timeout=${SPARK_NETWORK_TIMEOUT} \
     --conf spark.sql.adaptive.enabled=true \
     --conf spark.sql.adaptive.coalescePartitions.enabled=true \
     --conf spark.sql.adaptive.skewJoin.enabled=true \
