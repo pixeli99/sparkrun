@@ -215,9 +215,10 @@ def main():
     text_col = F.col(args.text_key)
     score_col = F.col(args.score_key)
 
-    # 8 个落盘点；每个阶段开始前 check _SUCCESS 自动 reuse，挂哪续哪
+    # 落盘点；每个阶段开始前 check _SUCCESS 自动 reuse，挂哪续哪。
+    # skip 模式下 exact/ 不存在（uid_df 是 lazy 的 raw + uid，没必要复制 17TB）。
     paths = {
-        "exact":      args.output_path + "/exact",       # uid + 全列 + __exact_cnt
+        "exact":      args.output_path + "/exact",       # 仅非 skip 模式：exact dedup 后 + uid + __exact_cnt
         "normalized": args.output_path + "/normalized",  # (uid, normalized_text) ← 把 Python UDF 固化
         "edges":      args.output_path + "/edges",       # (src, dst) chukonu LSH 候选边
         "wcc":        args.output_path + "/wcc",         # (vid, component)
@@ -230,41 +231,63 @@ def main():
     log.info("output path    : %s", args.output_path)
     log.info("checkpoints (auto-reuse on _SUCCESS):")
     for k, p in paths.items():
+        if k == "exact" and args.skip_exact_dedup:
+            log.info("  [skip ] %-12s -> (skip 模式：不落盘，uid_df 直接用 lazy raw)", k)
+            continue
         mark = "[reuse]" if output_complete(spark, p) else "[build]"
         log.info("  %s %-12s -> %s", mark, k, p)
 
     pipeline_t0 = time.time()
 
     # ============================================================
-    # Stage 1+2: exact/  ——  raw + uid + __exact_cnt 落盘
-    #   skip 模式 = 仅 uid checkpoint（必须落盘把 monotonically_increasing_id 固化）
-    #   非 skip   = 全局 exact dedup（按 sha256(text) groupBy 选 priority 最高）
+    # Stage 1+2:
+    #   skip 模式  -> 不落盘，uid_df = lazy(raw + uid + __exact_cnt=1)
+    #                 uid 稳定性依赖 ignoreCorruptFiles=false + 静态输入；
+    #                 file listing 顺序 + FilePartition 划分跨 stage 一致就稳。
+    #   非 skip 模式 -> 写 exact/（真做了 exact dedup，行数变了，必须落盘）
     # ============================================================
-    if output_complete(spark, paths["exact"]):
-        banner("Stage 1+2: reuse exact/")
-    else:
-        banner("Stage 1+2: build exact/  (skip_exact_dedup=%s)" % args.skip_exact_dedup)
+    if args.skip_exact_dedup:
+        banner("Stage 1+2: skip exact dedup, uid_df 用 lazy raw（不落盘）")
         t0 = time.time()
-        raw = (
+        # 强制关掉 ignoreCorruptFiles：如果偶发跳文件，partition_id 错位 -> uid 全错
+        spark.conf.set("spark.sql.files.ignoreCorruptFiles", "false")
+        uid_df = (
             spark.read
+            .option("ignoreCorruptFiles", "false")
             .option("recursiveFileLookup", "true")
             .parquet(args.input_path)
             .withColumn("__pri", build_priority(score_col, text_col))
-            .withColumn("__text_h", F.sha2(text_col, 256))
             .withColumn("uid", F.monotonically_increasing_id())
+            .withColumn("__exact_cnt", F.lit(1).cast("long"))
         )
-        log.info("input partitions : %d", raw.rdd.getNumPartitions())
+        log.info("input partitions : %d", uid_df.rdd.getNumPartitions())
         log.info("input schema:")
-        for f in raw.schema.fields:
+        for f in uid_df.schema.fields:
             log.info("  %-30s %s", f.name, f.dataType.simpleString())
-
-        if args.skip_exact_dedup:
-            (
-                raw.drop("__text_h")
-                   .withColumn("__exact_cnt", F.lit(1))
-                   .write.mode("overwrite").parquet(paths["exact"])
-            )
+        # footer-count 几乎免费，省一次全 scan agg
+        n_input = spark.read.parquet(args.input_path).count()
+        n_exact = n_input
+        log.info("[stage 1+2] lazy plan + footer count in %s", fmt_dur(time.time() - t0))
+        log.info("  input rows         : %s   (= n_exact, exact dedup skipped)", f"{n_input:,}")
+    else:
+        if output_complete(spark, paths["exact"]):
+            banner("Stage 1+2: reuse exact/")
         else:
+            banner("Stage 1+2: build exact/  (global exact dedup)")
+            t0 = time.time()
+            raw = (
+                spark.read
+                .option("ignoreCorruptFiles", "false")
+                .option("recursiveFileLookup", "true")
+                .parquet(args.input_path)
+                .withColumn("__pri", build_priority(score_col, text_col))
+                .withColumn("__text_h", F.sha2(text_col, 256))
+                .withColumn("uid", F.monotonically_increasing_id())
+            )
+            log.info("input partitions : %d", raw.rdd.getNumPartitions())
+            log.info("input schema:")
+            for f in raw.schema.fields:
+                log.info("  %-30s %s", f.name, f.dataType.simpleString())
             # 窄列 shuffle：只搬 (sha256, pri, text_len, uid) 选出 keeper uid，
             # 再 join 回 wide row 写盘
             exact_keeper = (
@@ -289,21 +312,21 @@ def main():
                    .join(exact_keeper, "uid", "inner")
                    .write.mode("overwrite").parquet(paths["exact"])
             )
-        log.info("[stage 1+2] exact/ written in %s", fmt_dur(time.time() - t0))
-    uid_df = spark.read.parquet(paths["exact"])
+            log.info("[stage 1+2] exact/ written in %s", fmt_dur(time.time() - t0))
+        uid_df = spark.read.parquet(paths["exact"])
 
-    t0 = time.time()
-    s12 = uid_df.agg(
-        F.count(F.lit(1)).alias("n_exact"),
-        F.sum("__exact_cnt").alias("n_input"),
-    ).collect()[0]
-    n_exact = int(s12["n_exact"])
-    n_input = int(s12["n_input"] or 0)
-    log.info("[stage 1+2] stats in %s", fmt_dur(time.time() - t0))
-    log.info("  input rows         : %s", f"{n_input:,}")
-    log.info("  after exact dedup  : %s", f"{n_exact:,}")
-    log.info("  exact dedup ratio  : %.2f%%",
-             100.0 * (1 - n_exact / max(n_input, 1)))
+        t0 = time.time()
+        s12 = uid_df.agg(
+            F.count(F.lit(1)).alias("n_exact"),
+            F.sum("__exact_cnt").alias("n_input"),
+        ).collect()[0]
+        n_exact = int(s12["n_exact"])
+        n_input = int(s12["n_input"] or 0)
+        log.info("[stage 1+2] stats in %s", fmt_dur(time.time() - t0))
+        log.info("  input rows         : %s", f"{n_input:,}")
+        log.info("  after exact dedup  : %s", f"{n_exact:,}")
+        log.info("  exact dedup ratio  : %.2f%%",
+                 100.0 * (1 - n_exact / max(n_input, 1)))
 
     # ============================================================
     # Stage 3a: normalized/  (uid, normalized_text)

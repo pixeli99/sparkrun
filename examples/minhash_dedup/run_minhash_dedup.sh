@@ -113,7 +113,7 @@ spark-submit \
     --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
     --conf spark.sql.adaptive.coalescePartitions.minPartitionSize=128m \
     --conf spark.sql.files.maxRecordsPerFile=2000000 \
-    --conf spark.sql.files.ignoreCorruptFiles=true \
+    --conf spark.sql.files.ignoreCorruptFiles=false \
     --conf spark.plugins=org.pacman.chukonu.ChukonuPlugin \
     --conf spark.chukonu.enableNativeCodegen=true \
     --conf spark.chukonu.root=/opt/chukonu_install \
