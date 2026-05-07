@@ -33,6 +33,5 @@ export SPARK_UI_TIMELINE_TASKS_MAXIMUM="1000"
 export SPARK_EXECUTOR_HEARTBEAT_INTERVAL="60s"
 export SPARK_NETWORK_TIMEOUT="600s"
 
-# 断点续跑参数：只有确认对应目录存在 _SUCCESS 时再改成 true。
-export REUSE_EXACT="false"
-export REUSE_WCC="false"
+# 断点续跑：每个落盘点（exact/normalized/edges/wcc/keepers/near/isolated/result）
+# 看到 _SUCCESS 就自动 reuse；想从某一步重跑就 rm 掉那一步及后续目录。

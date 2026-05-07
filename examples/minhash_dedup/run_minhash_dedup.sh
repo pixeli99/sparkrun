@@ -43,8 +43,6 @@ fi
 if [[ ! ${R+x} ]]; then
     R="16"
 fi
-REUSE_EXACT="${REUSE_EXACT:-false}"
-REUSE_WCC="${REUSE_WCC:-false}"
 SKIP_EXACT_DEDUP="${SKIP_EXACT_DEDUP:-false}"
 
 # spark.local.dir 隔离到 per-job 子目录，避免并发 job 互相覆盖 shuffle spill
@@ -61,14 +59,6 @@ ERR_FILE="${LOG_PATH}/minhash-dedup-${TIMESTAMP}.err"
 LSH_ARGS=""
 [[ -n "${B}" ]] && LSH_ARGS+=" --b ${B}"
 [[ -n "${R}" ]] && LSH_ARGS+=" --r ${R}"
-
-REUSE_ARGS=""
-case "${REUSE_EXACT}" in
-    1|true|TRUE|yes|YES) REUSE_ARGS+=" --reuse_exact" ;;
-esac
-case "${REUSE_WCC}" in
-    1|true|TRUE|yes|YES) REUSE_ARGS+=" --reuse_wcc" ;;
-esac
 
 EXACT_ARGS=""
 case "${SKIP_EXACT_DEDUP}" in
@@ -93,8 +83,8 @@ echo "  SPARK_UI_RETAINED_TASKS: ${SPARK_UI_RETAINED_TASKS}"
 echo "  SPARK_SQL_UI_RETAINED_EXECUTIONS: ${SPARK_SQL_UI_RETAINED_EXECUTIONS}"
 echo "  SPARK_EXECUTOR_HEARTBEAT_INTERVAL: ${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}"
 echo "  SPARK_NETWORK_TIMEOUT: ${SPARK_NETWORK_TIMEOUT}"
-echo "  REUSE_EXACT: ${REUSE_EXACT}  REUSE_WCC: ${REUSE_WCC}"
 echo "  SKIP_EXACT_DEDUP: ${SKIP_EXACT_DEDUP}"
+echo "  (auto-reuse on _SUCCESS for each of exact/normalized/edges/wcc/keepers/near/isolated/result)"
 echo "  SPARK_LOCAL_DIR: ${SPARK_LOCAL_DIR}"
 echo "  Driver stdout: ${LOG_FILE}"
 echo "  Driver stderr: ${ERR_FILE}"
@@ -148,7 +138,6 @@ spark-submit \
     --num_perm ${NUM_PERM} \
     ${LSH_ARGS} \
     ${EXACT_ARGS} \
-    ${REUSE_ARGS} \
     --num_parallel ${WCC_PARALLELISM} \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)
