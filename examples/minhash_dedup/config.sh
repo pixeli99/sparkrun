@@ -21,6 +21,11 @@ export SQL_SHUFFLE_PARTITIONS="65536"
 export WCC_PARALLELISM="8192"
 export SKIP_EXACT_DEDUP="true"
 
+# Executor 内存：SBATCH --mem=512GB 是节点 hard limit，给 JVM heap 全部 512G 会被 cgroup kill。
+# chukonu native + Python UDF workers + JVM overhead 大概要留 96GB 给 native 侧。
+export EXECUTOR_MEMORY="416G"
+export EXECUTOR_MEMORY_OVERHEAD="64G"
+
 # driver/AppStatusListener 防 OOM：全量输入约 30 万 input tasks，默认 UI/status
 # 会在 driver 侧保留太多 task metrics。
 export DRIVER_MEMORY="128G"

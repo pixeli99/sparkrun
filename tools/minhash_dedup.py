@@ -255,6 +255,7 @@ def main():
             spark.read
             .option("ignoreCorruptFiles", "false")
             .option("recursiveFileLookup", "true")
+            .option("pathGlobFilter", "*.parquet")
             .parquet(args.input_path)
             .withColumn("__pri", build_priority(score_col, text_col))
             .withColumn("uid", F.monotonically_increasing_id())
@@ -265,7 +266,13 @@ def main():
         for f in uid_df.schema.fields:
             log.info("  %-30s %s", f.name, f.dataType.simpleString())
         # footer-count 几乎免费，省一次全 scan agg
-        n_input = spark.read.parquet(args.input_path).count()
+        n_input = (
+            spark.read
+            .option("recursiveFileLookup", "true")
+            .option("pathGlobFilter", "*.parquet")
+            .parquet(args.input_path)
+            .count()
+        )
         n_exact = n_input
         log.info("[stage 1+2] lazy plan + footer count in %s", fmt_dur(time.time() - t0))
         log.info("  input rows         : %s   (= n_exact, exact dedup skipped)", f"{n_input:,}")
@@ -279,6 +286,7 @@ def main():
                 spark.read
                 .option("ignoreCorruptFiles", "false")
                 .option("recursiveFileLookup", "true")
+                .option("pathGlobFilter", "*.parquet")
                 .parquet(args.input_path)
                 .withColumn("__pri", build_priority(score_col, text_col))
                 .withColumn("__text_h", F.sha2(text_col, 256))

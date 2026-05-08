@@ -125,7 +125,8 @@ spark-submit \
     --conf spark.kryo.unsafe=true \
     --conf spark.shuffle.service.enabled=false \
     --conf spark.memory.offHeap.enabled=true \
-    --conf spark.memory.offHeap.size=4g \
+    --conf spark.memory.offHeap.size="${SPARK_OFFHEAP_SIZE:-16g}" \
+    --conf spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2 \
     --conf spark.local.dir="${SPARK_LOCAL_DIR}" \
     tools/minhash_dedup.py \
     --input_path "${INPUT_PATH}" \
