@@ -130,8 +130,8 @@ spark-submit \
     --conf spark.scheduler.outputCommitCoordination.enabled=false \
     --conf spark.task.maxFailures=10 \
     --conf spark.stage.maxConsecutiveAttempts=8 \
-    --conf spark.executor.extraJavaOptions="-XX:+UnlockExperimentalVMOptions -XX:+UseZGC -XX:+ParallelRefProcEnabled" \
-    --conf spark.driver.extraJavaOptions="-XX:+UnlockExperimentalVMOptions -XX:+UseZGC -XX:+ParallelRefProcEnabled" \
+    --conf spark.executor.extraJavaOptions="-XX:+UseG1GC -XX:G1HeapRegionSize=32m -XX:MaxGCPauseMillis=300 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ParallelRefProcEnabled" \
+    --conf spark.driver.extraJavaOptions="-XX:+UseG1GC -XX:G1HeapRegionSize=32m -XX:MaxGCPauseMillis=300 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ParallelRefProcEnabled" \
     --conf spark.local.dir="${SPARK_LOCAL_DIR}" \
     tools/minhash_dedup.py \
     --input_path "${INPUT_PATH}" \
