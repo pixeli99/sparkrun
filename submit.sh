@@ -2,7 +2,7 @@
 #SBATCH --job-name=spark
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --mem=512GB
+#SBATCH --mem=900GB
 #SBATCH --cpus-per-task=64
 #SBATCH --output=logs/slurm/%j-spark.out
 #SBATCH --error=logs/slurm/%j-spark.err

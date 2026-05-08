@@ -21,10 +21,13 @@ export SQL_SHUFFLE_PARTITIONS="65536"
 export WCC_PARALLELISM="8192"
 export SKIP_EXACT_DEDUP="true"
 
-# Executor 内存：SBATCH --mem=512GB 是节点 hard limit，给 JVM heap 全部 512G 会被 cgroup kill。
-# chukonu native + Python UDF workers + JVM overhead 大概要留 96GB 给 native 侧。
-export EXECUTOR_MEMORY="416G"
-export EXECUTOR_MEMORY_OVERHEAD="64G"
+# Executor 内存：节点物理 1TB，SBATCH --mem=900GB（留 100GB 给 OS + lustre client）。
+# spark cgroup 限制 = SBATCH --mem。要保证 executor.memory + memoryOverhead < SBATCH --mem。
+# 700+192=892 < 900，留 8G margin。
+export EXECUTOR_MEMORY="700G"
+export EXECUTOR_MEMORY_OVERHEAD="192G"
+# chukonu off-heap 池子相应放大
+export SPARK_OFFHEAP_SIZE="32g"
 
 # driver/AppStatusListener 防 OOM：全量输入约 30 万 input tasks，默认 UI/status
 # 会在 driver 侧保留太多 task metrics。

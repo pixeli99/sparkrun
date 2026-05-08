@@ -127,6 +127,11 @@ spark-submit \
     --conf spark.memory.offHeap.enabled=true \
     --conf spark.memory.offHeap.size="${SPARK_OFFHEAP_SIZE:-16g}" \
     --conf spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2 \
+    --conf spark.scheduler.outputCommitCoordination.enabled=false \
+    --conf spark.task.maxFailures=10 \
+    --conf spark.stage.maxConsecutiveAttempts=8 \
+    --conf spark.executor.extraJavaOptions="-XX:+UnlockExperimentalVMOptions -XX:+UseZGC -XX:+ParallelRefProcEnabled" \
+    --conf spark.driver.extraJavaOptions="-XX:+UnlockExperimentalVMOptions -XX:+UseZGC -XX:+ParallelRefProcEnabled" \
     --conf spark.local.dir="${SPARK_LOCAL_DIR}" \
     tools/minhash_dedup.py \
     --input_path "${INPUT_PATH}" \
