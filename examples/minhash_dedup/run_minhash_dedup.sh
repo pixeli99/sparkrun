@@ -32,6 +32,7 @@ INPUT_PATH=${INPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012"
 OUTPUT_PATH=${OUTPUT_PATH:-"/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012_minhash"}
 TEXT_KEY=${TEXT_KEY:-"text"}
 SCORE_KEY=${SCORE_KEY:-"stage3_score"}
+WEIGHT_KEY=${WEIGHT_KEY:-"duplicate_count"}
 
 THRESHOLD=${THRESHOLD:-"0.85"}
 NGRAM_SIZE=${NGRAM_SIZE:-"5"}
@@ -44,6 +45,7 @@ if [[ ! ${R+x} ]]; then
     R="16"
 fi
 SKIP_EXACT_DEDUP="${SKIP_EXACT_DEDUP:-false}"
+MINHASH_INPUT_PARTITIONS="${MINHASH_INPUT_PARTITIONS:-${SQL_SHUFFLE_PARTITIONS}}"
 
 # spark.local.dir 隔离到 per-job 子目录，避免并发 job 互相覆盖 shuffle spill
 SPARK_LOCAL_DIR=${SPARK_LOCAL_DIR:-"/lustre/projects/polyullm/lipengxiang_tmp/spark_local/${SLURM_JOB_ID:-default}"}
@@ -72,13 +74,14 @@ echo "MinHash dedup config:"
 echo "  MASTER_URL: ${MASTER_URL}"
 echo "  INPUT_PATH: ${INPUT_PATH}"
 echo "  OUTPUT_PATH: ${OUTPUT_PATH}"
-echo "  TEXT_KEY: ${TEXT_KEY}  SCORE_KEY: ${SCORE_KEY}"
+echo "  TEXT_KEY: ${TEXT_KEY}  SCORE_KEY: ${SCORE_KEY}  WEIGHT_KEY: ${WEIGHT_KEY}"
 echo "  THRESHOLD: ${THRESHOLD}  NUM_PERM: ${NUM_PERM}  B: ${B:-auto}  R: ${R:-auto}"
 echo "  EXECUTOR_CORES: ${EXECUTOR_CORES}  EXECUTOR_MEMORY: ${EXECUTOR_MEMORY}"
 echo "  DRIVER_CORES: ${DRIVER_CORES}  DRIVER_MEMORY: ${DRIVER_MEMORY}"
 echo "  DEFAULT_PARALLELISM: ${DEFAULT_PARALLELISM}"
 echo "  SQL_SHUFFLE_PARTITIONS: ${SQL_SHUFFLE_PARTITIONS}"
 echo "  WCC_PARALLELISM: ${WCC_PARALLELISM}"
+echo "  MINHASH_INPUT_PARTITIONS: ${MINHASH_INPUT_PARTITIONS}"
 echo "  SPARK_UI_RETAINED_TASKS: ${SPARK_UI_RETAINED_TASKS}"
 echo "  SPARK_SQL_UI_RETAINED_EXECUTIONS: ${SPARK_SQL_UI_RETAINED_EXECUTIONS}"
 echo "  SPARK_EXECUTOR_HEARTBEAT_INTERVAL: ${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}"
@@ -106,6 +109,8 @@ spark-submit \
     --conf spark.ui.timeline.tasks.maximum=${SPARK_UI_TIMELINE_TASKS_MAXIMUM} \
     --conf spark.executor.heartbeatInterval=${SPARK_EXECUTOR_HEARTBEAT_INTERVAL} \
     --conf spark.network.timeout=${SPARK_NETWORK_TIMEOUT} \
+    --conf spark.shuffle.io.maxRetries="${SPARK_SHUFFLE_IO_MAX_RETRIES:-10}" \
+    --conf spark.shuffle.io.retryWait="${SPARK_SHUFFLE_IO_RETRY_WAIT:-30s}" \
     --conf spark.sql.adaptive.enabled=true \
     --conf spark.sql.adaptive.coalescePartitions.enabled=true \
     --conf spark.sql.adaptive.skewJoin.enabled=true \
@@ -138,12 +143,14 @@ spark-submit \
     --output_path "${OUTPUT_PATH}" \
     --text_key "${TEXT_KEY}" \
     --score_key "${SCORE_KEY}" \
+    --weight_key "${WEIGHT_KEY}" \
     --threshold ${THRESHOLD} \
     --ngram_size ${NGRAM_SIZE} \
     --min_length ${MIN_LENGTH} \
     --num_perm ${NUM_PERM} \
     ${LSH_ARGS} \
     ${EXACT_ARGS} \
+    --minhash_input_partitions ${MINHASH_INPUT_PARTITIONS} \
     --num_parallel ${WCC_PARALLELISM} \
     > >(tee -a "${LOG_FILE}") \
     2> >(tee -a "${ERR_FILE}" >&2)

@@ -5,6 +5,9 @@ export INPUT_PATH="/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012"
 export OUTPUT_PATH="/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012_dedup_v3"
 export TEXT_KEY="text"
 export SCORE_KEY="stage3_score"
+# 如果上游 exact dedup 已经把重复数写进 duplicate_count，这里会把它累计到最终结果。
+# 输入没有该列时自动按 1 处理。
+export WEIGHT_KEY="duplicate_count"
 
 # MinHash 参数（threshold=0.85 时 b=8, r=16 是 datasketch 经验最优组合）
 export THRESHOLD="0.85"
@@ -19,6 +22,9 @@ export R="16"
 # 先跳过全局 exact dedup，避免 Stage 2 在 17TB 全量上产生超大 driver/task metrics 压力。
 export SQL_SHUFFLE_PARTITIONS="65536"
 export WCC_PARALLELISM="8192"
+# 已落盘 normalized/ 分区过多时，Stage 3b 先窄依赖 coalesce，减少 shuffle map output 数。
+# 复用已有 normalized/，不会重写 normalized/。
+export MINHASH_INPUT_PARTITIONS="65536"
 export SKIP_EXACT_DEDUP="true"
 
 # Executor 内存：节点物理 1TB，SBATCH --mem=900GB。
