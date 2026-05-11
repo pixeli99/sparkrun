@@ -36,6 +36,11 @@ spark-submit \
     "${CONFIG_PATH}" \
     > "${LOG_FILE}" 2> "${ERR_FILE}"
 
+submit_status=$?
+
 echo "Job completed. Logs:"
 echo "  stdout: ${LOG_FILE}"
 echo "  stderr: ${ERR_FILE}"
+echo "spark-submit exit code: ${submit_status}"
+
+exit "${submit_status}"

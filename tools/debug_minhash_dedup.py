@@ -168,6 +168,8 @@ def main() -> int:
             [
                 F.count(F.lit(1)).alias("exact_rows"),
                 F.countDistinct("uid").alias("exact_distinct_uid"),
+                F.min("uid").alias("exact_min_uid"),
+                F.max("uid").alias("exact_max_uid"),
                 sum_col(exact, "__exact_cnt", "exact_sum_exact_cnt"),
             ],
         )
@@ -180,6 +182,8 @@ def main() -> int:
                 F.count(F.lit(1)).alias("wcc_rows"),
                 F.countDistinct("vid").alias("wcc_distinct_vid"),
                 F.countDistinct("component").alias("wcc_distinct_component"),
+                F.min("vid").alias("wcc_min_vid"),
+                F.max("vid").alias("wcc_max_vid"),
             ],
         )
 
@@ -191,6 +195,8 @@ def main() -> int:
                 F.count(F.lit(1)).alias("keepers_rows"),
                 F.countDistinct("component").alias("keepers_distinct_component"),
                 F.countDistinct("keeper_uid").alias("keepers_distinct_keeper_uid"),
+                F.min("keeper_uid").alias("keepers_min_keeper_uid"),
+                F.max("keeper_uid").alias("keepers_max_keeper_uid"),
                 sum_col(keepers, args.weight_key, "keepers_sum_weight"),
             ],
         )
@@ -277,12 +283,22 @@ def main() -> int:
         report("result sum vs near+isolated", result_sum, near_sum + isolated_sum)
     if wcc_distinct_vid is not None and isolated_rows is not None:
         report("exact rows vs wcc distinct+isolated", exact_rows, wcc_distinct_vid + isolated_rows)
+    if exact_rows is not None and wcc_distinct_vid is not None:
+        report("isolated rows vs exact-wcc", isolated_rows, exact_rows - wcc_distinct_vid)
     report("result sum vs exact sum", result_sum, exact_sum)
 
+    if keepers_rows is not None and exact_rows is not None and wcc_distinct_vid is not None:
+        expected_isolated = exact_rows - wcc_distinct_vid
+        expected_kept = keepers_rows + expected_isolated
+        log.info("expected isolated from exact-wcc  : %s", f"{expected_isolated:,}")
+        log.info("expected kept from wcc+keepers    : %s", f"{expected_kept:,}")
+        log.info("expected dedup ratio from wcc     : %s", pct(1.0 - expected_kept / exact_rows))
+        if result_rows is not None:
+            log.info("result row overage vs wcc expected: %s", f"{result_rows - expected_kept:,}")
     if keepers_rows is not None and isolated_rows is not None and exact_rows:
         expected_kept = keepers_rows + isolated_rows
-        log.info("expected kept from keepers+isolated : %s", f"{expected_kept:,}")
-        log.info("expected dedup ratio               : %s", pct(1.0 - expected_kept / exact_rows))
+        log.info("persisted kept from keepers+isolated: %s", f"{expected_kept:,}")
+        log.info("persisted checkpoint dedup ratio   : %s", pct(1.0 - expected_kept / exact_rows))
     if result_rows is not None and exact_rows:
         log.info("actual result dedup ratio          : %s", pct(1.0 - result_rows / exact_rows))
     if result_rows is not None and keepers_rows is not None and isolated_rows is not None:
@@ -292,6 +308,18 @@ def main() -> int:
         )
     if result_sum is not None and exact_sum is not None:
         log.info("result sum overage vs exact sum    : %s", f"{result_sum - exact_sum:,}")
+    if (
+        near_rows is not None
+        and keepers_rows is not None
+        and isolated_rows is not None
+        and exact_rows is not None
+        and near_rows != keepers_rows
+        and isolated_rows > exact_rows * 0.9
+    ):
+        log.warning(
+            "likely id-space mismatch: wcc/keepers ids barely join exact.uid; "
+            "do not trust near/, isolated/, or result/."
+        )
 
     if args.quick:
         return 0

@@ -46,7 +46,7 @@ def main(spark: SparkSession, yaml_config: dict):
         df = spark.read.parquet(inc_path["hash_oss_path"])
         df_inc_hash = df if not df_inc_hash else df_inc_hash.unionByName(df)
 
-        input_list = get_input_path(inc_path)
+        input_list = get_input_path(inc_path["path"])
         print("input_list:", input_list)
         df_text = (
             spark.read.option("recursiveFileLookup", "true")
