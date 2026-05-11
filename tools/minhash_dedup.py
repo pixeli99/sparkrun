@@ -29,7 +29,7 @@ import numpy as np
 from chukonu import invoke
 from chukonu.config import find_chukonu_lib_path
 from pyspark import SparkConf
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import DataFrame, SparkSession, functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 from scipy.integrate import quad as integrate
 
@@ -210,6 +210,72 @@ def row_weight(df, args):
 
 def split_input_paths(input_path: str):
     return [p.strip() for p in input_path.split(",") if p.strip()]
+
+
+def validate_id_sample(
+    self_df: DataFrame,
+    self_col: str,
+    other_df: DataFrame,
+    other_col: str,
+    self_label: str,
+    other_label: str,
+    sample_size: int = 4096,
+    sample_fraction: float = 1e-3,
+) -> None:
+    """抽样校验 self_df.self_col 的值都落在 other_df.other_col 里。
+
+    用来在 reuse checkpoint 时尽早挡掉 ID-space 错位（注意：硬不变量
+    invariant 仍在 stage 5 末尾，这里只是 fast-fail）。
+
+    注意 ``F.monotonically_increasing_id()`` 把 partition_id 放在高位、行号放
+    在低位，partition 0 的 uid 是 0..n0-1。``.limit(N)`` 在 parquet 上等价于
+    "拿第一个 file 的前 N 行"，全是 partition 0 的低位 uid，两个不同 run
+    的 partition 0 大概率重合 → 抽样会假阳性通过。所以这里走
+    ``.sample(False, fraction)``：在所有 partition 上做 Bernoulli 采样，能拿
+    到高位 partition 的 uid，错位就能被采到。
+
+    Args:
+        sample_size: 实际拿来 join 的最大 distinct id 数。
+        sample_fraction: Bernoulli 采样率；对 1.2B 行约采 1.2M 候选，再 limit。
+    """
+    t0 = time.time()
+    sample = (
+        self_df.select(F.col(self_col).cast("long").alias("__probe"))
+               .sample(withReplacement=False, fraction=sample_fraction, seed=42)
+               .distinct()
+               .limit(sample_size)
+    )
+    sample_count = sample.count()
+    if sample_count == 0:
+        log.info(
+            "[id-check] %s.%s sample is empty (fraction=%g); skipping uid-space "
+            "check vs %s.%s",
+            self_label, self_col, sample_fraction, other_label, other_col,
+        )
+        return
+    matched = sample.join(
+        other_df.select(F.col(other_col).cast("long").alias("__probe")),
+        "__probe",
+        "inner",
+    ).count()
+    missing = sample_count - matched
+    log.info(
+        "[id-check] %s.%s vs %s.%s in %s: sampled=%d matched=%d missing=%d",
+        self_label, self_col, other_label, other_col,
+        fmt_dur(time.time() - t0), sample_count, matched, missing,
+    )
+    if missing == 0:
+        return
+    raise RuntimeError(
+        f"uid-space mismatch: sampled {sample_count} distinct "
+        f"{self_label}.{self_col} values but {missing} of them are NOT in "
+        f"{other_label}.{other_col}. This usually means {self_label}/ was "
+        "written by an earlier run whose uid generation no longer matches "
+        "the current exact/ checkpoint. monotonically_increasing_id() is "
+        "non-deterministic across runs, so the only safe recovery is to "
+        f"delete {self_label}/ and every checkpoint that depends on it "
+        "(any of: edges/ wcc/ keepers/ near/ isolated/ result/) and rerun."
+    )
 
 
 def main():
@@ -401,16 +467,17 @@ def main():
         log.info("[checkpoint] committed %s/: %s", stage, path)
 
     def materialize_uid_checkpoint(reason: str):
-        """For skip-exact mode, exact/ is a durable uid -> wide-row checkpoint."""
+        """For skip-exact mode, exact/ is a durable uid -> wide-row checkpoint.
+
+        Must be called BEFORE any downstream stage runs or reuses — uid
+        comes from `monotonically_increasing_id`, which is non-deterministic
+        across runs, so every downstream stage has to pin to this
+        checkpoint's uid space. The Stage 1+2 wrapper refuses to proceed
+        if any downstream checkpoint already exists on disk without exact/.
+        """
         if output_complete(spark, paths["exact"]):
             return
         banner(reason)
-        if output_complete(spark, paths["normalized"]):
-            log.warning(
-                "normalized/ already exists but exact/ uid checkpoint does not; "
-                "this run assumes the input files and Spark file partitioning are unchanged "
-                "from the run that produced normalized/."
-            )
         t0 = time.time()
         raw = raw_input_df()
         uid_checkpoint = add_uid_columns(raw)
@@ -431,42 +498,52 @@ def main():
 
     # ============================================================
     # Stage 1+2:
-    #   skip 模式  -> 优先复用 exact/ 作为 uid checkpoint；如果 exact/ 不存在，
-    #                 前半段可继续用 lazy(raw + uid)，后半段需要 wide row 前会落盘。
-    #                 uid 稳定性依赖 ignoreCorruptFiles=false + 静态输入；
-    #                 file listing 顺序 + FilePartition 划分跨 stage 一致就稳。
+    #   skip 模式  -> exact/ 是 uid checkpoint，开局就 materialize 落盘
+    #                 (不能 lazy 到 stage 3a/4 —— monotonically_increasing_id
+    #                 跨 run 不稳定，后写的 exact/ 会跟前面写的 normalized/wcc
+    #                 不在一个 uid space，stage 5 join 会大面积错配)。
+    #                 如果 exact/ 缺失但下游 checkpoint 已存在，直接 RuntimeError
+    #                 (没法稳定还原下游当时用的 uid，安全恢复办法是删下游重跑)。
     #   非 skip 模式 -> 写 exact/（真做了 exact dedup，行数变了，必须落盘）
     # ============================================================
-    normalized_rows = None
     if args.skip_exact_dedup:
         spark.conf.set("spark.sql.files.ignoreCorruptFiles", "false")
         t0 = time.time()
         if output_complete(spark, paths["exact"]):
             banner("Stage 1+2: reuse exact/ uid checkpoint")
-            uid_df = read_uid_checkpoint()
-            n_exact, n_input = uid_stats(uid_df)
-            log.info("[stage 1+2] checkpoint stats in %s", fmt_dur(time.time() - t0))
         else:
-            banner("Stage 1+2: skip exact dedup, uid_df 先用 lazy raw")
-            raw = raw_input_df()
-            uid_df = add_uid_columns(raw)
-            log_input_shape(uid_df)
-            if output_complete(spark, paths["normalized"]):
-                normalized_rows = spark.read.parquet(paths["normalized"]).count()
-                n_exact = normalized_rows
-                n_input = normalized_rows
-                if args.weight_key and args.weight_key in raw.schema.names:
-                    log.info(
-                        "  %s exists in input; weighted input rows will be recomputed "
-                        "after exact/ uid checkpoint is materialized",
-                        args.weight_key,
-                    )
-                log.info("[stage 1+2] lazy plan + normalized count in %s",
-                         fmt_dur(time.time() - t0))
-            else:
-                n_exact, n_input = uid_stats(uid_df)
-                log.info("[stage 1+2] lazy plan + raw stats in %s",
-                         fmt_dur(time.time() - t0))
+            # exact/ is the uid checkpoint that anchors every downstream
+            # stage. monotonically_increasing_id() is NOT stable across
+            # runs, so if any downstream checkpoint already exists we
+            # cannot safely re-materialize exact/ — the new uid space
+            # would silently disagree with normalized/wcc/keepers, and
+            # the stage 5 joins would mostly miss (the historical
+            # near_rows=48,998 vs keepers_rows=402M bug).
+            stale_downstream = [
+                stage for stage in (
+                    "normalized", "edges", "wcc", "keepers",
+                    "near", "isolated", "result",
+                )
+                if output_complete(spark, paths[stage])
+            ]
+            if stale_downstream:
+                raise RuntimeError(
+                    "exact/ uid checkpoint is missing but downstream "
+                    f"checkpoint(s) {stale_downstream} already exist. In "
+                    "skip_exact_dedup mode, exact/ anchors the uid space "
+                    "used by every downstream stage; rebuilding it now "
+                    "would produce a different uid space "
+                    "(monotonically_increasing_id is non-deterministic "
+                    "across runs). Delete the listed checkpoints and "
+                    "rerun, or restore the matching exact/ from backup. "
+                    f"Output root: {args.output_path}"
+                )
+            materialize_uid_checkpoint(
+                "Stage 1+2: materialize exact/ uid checkpoint up front"
+            )
+        uid_df = read_uid_checkpoint()
+        n_exact, n_input = uid_stats(uid_df)
+        log.info("[stage 1+2] uid stats in %s", fmt_dur(time.time() - t0))
         log.info("  input rows         : %s   (= weighted rows if %s exists)",
                  f"{n_input:,}", args.weight_key)
         log.info("  rows entering LSH  : %s   (exact dedup skipped here)", f"{n_exact:,}")
@@ -535,18 +612,6 @@ def main():
     if reuse_normalized:
         banner("Stage 3a: reuse normalized/")
     else:
-        if args.skip_exact_dedup and not output_complete(spark, paths["exact"]):
-            materialize_uid_checkpoint("Stage 1+2: materialize exact/ uid checkpoint before normalized/")
-            uid_df = read_uid_checkpoint()
-            n_exact, n_input = uid_stats(uid_df)
-            if normalized_rows is not None and n_exact != normalized_rows:
-                raise RuntimeError(
-                    f"uid checkpoint row count {n_exact:,} does not match "
-                    f"existing normalized/ row count {normalized_rows:,}"
-                )
-            log.info("  input rows         : %s   (= weighted rows if %s exists)",
-                     f"{n_input:,}", args.weight_key)
-            log.info("  rows entering LSH  : %s   (exact dedup skipped here)", f"{n_exact:,}")
         banner("Stage 3a: normalize text -> normalized/")
         t0 = time.time()
         normal_udf = F.udf(normalize_text, StringType())
@@ -558,16 +623,16 @@ def main():
         )
         log.info("[stage 3a] normalized/ written in %s", fmt_dur(time.time() - t0))
     records = spark.read.parquet(paths["normalized"])
-    if args.skip_exact_dedup and output_complete(spark, paths["exact"]):
-        if normalized_rows is None:
-            normalized_rows = records.count()
-        if n_exact != normalized_rows:
-            raise RuntimeError(
-                f"exact/ uid checkpoint row count {n_exact:,} does not match "
-                f"normalized/ row count {normalized_rows:,}; remove exact/ or the "
-                "affected downstream checkpoints and rerun with unchanged input."
-            )
-        log.info("  exact/ and normalized/ row counts match: %s", f"{n_exact:,}")
+    if reuse_normalized:
+        # normalized/ on disk may come from an earlier run whose uid
+        # generation no longer lines up with the active exact/. Sample its
+        # uid values against exact/.uid before anything downstream joins
+        # on them — this is the check that catches the historical
+        # ID-space-mismatch bug.
+        validate_id_sample(
+            records, "uid", uid_df, "uid",
+            self_label="normalized", other_label="exact",
+        )
     records_partitions = records.rdd.getNumPartitions()
     if args.minhash_input_partitions and records_partitions > args.minhash_input_partitions:
         log.info(
@@ -667,18 +732,16 @@ def main():
     log.info("  near-dup coverage     : %.2f%% of exact-deduped set",
              100.0 * n_wcc_nodes / max(n_exact, 1))
 
-    if args.skip_exact_dedup and not output_complete(spark, paths["exact"]):
-        materialize_uid_checkpoint("Stage 1+2: materialize exact/ uid checkpoint for wide-row stages")
-        uid_df = read_uid_checkpoint()
-        n_exact, n_input = uid_stats(uid_df)
-        if normalized_rows is not None and n_exact != normalized_rows:
-            raise RuntimeError(
-                f"uid checkpoint row count {n_exact:,} does not match "
-                f"existing normalized/ row count {normalized_rows:,}"
-            )
-        log.info("  input rows         : %s   (= weighted rows if %s exists)",
-                 f"{n_input:,}", args.weight_key)
-        log.info("  rows entering LSH  : %s   (exact dedup skipped here)", f"{n_exact:,}")
+    if reuse_wcc:
+        # wcc/ on disk may come from an earlier run whose uid generation
+        # no longer lines up with the active exact/. Sample wcc/.vid
+        # against exact/.uid before stage 5 joins on uid==vid — this is
+        # exactly where the historical bug surfaced (near_rows=48,998
+        # vs keepers_rows=402M).
+        validate_id_sample(
+            wcc_df, "vid", uid_df, "uid",
+            self_label="wcc", other_label="exact",
+        )
 
     # ============================================================
     # Stage 5a: keepers/  (component, keeper_uid, duplicate_count)
@@ -724,6 +787,17 @@ def main():
     log.info("  clusters              : %s", f"{n_clusters:,}")
     log.info("  exact-cnt in clusters : %s", f"{n_in_clusters:,}")
 
+    if reuse_keepers:
+        # keepers/.keeper_uid was picked via max_by(uid) over the
+        # (uid_df ⋈ wcc) inner join when keepers/ was first written. If
+        # that earlier run used a different uid generation, the stage 5b
+        # join uid==keeper_uid silently almost-misses — exactly the
+        # historical near_rows=48,998 vs keepers_rows=402M symptom.
+        validate_id_sample(
+            keepers_df, "keeper_uid", uid_df, "uid",
+            self_label="keepers", other_label="exact",
+        )
+
     internal_cols = {"__pri", "uid", "__exact_cnt"}
     if args.weight_key:
         internal_cols.add(args.weight_key)
@@ -748,6 +822,39 @@ def main():
         )
         write_parquet_checkpoint(near_deduped, "near", paths["near"], force=force_near)
         log.info("[stage 5b] near/ written in %s", fmt_dur(time.time() - t0))
+    near_df = spark.read.parquet(paths["near"])
+
+    t0 = time.time()
+    s5b = near_df.agg(
+        F.count(F.lit(1)).alias("n_near"),
+        F.sum("duplicate_count").alias("near_sum"),
+    ).collect()[0]
+    n_near = int(s5b["n_near"])
+    near_sum = int(s5b["near_sum"] or 0)
+    log.info("[stage 5b] stats in %s", fmt_dur(time.time() - t0))
+    log.info("  near rows             : %s", f"{n_near:,}")
+    log.info("  near sum              : %s", f"{near_sum:,}")
+
+    # Hard invariants — must hold whether near/ was freshly written or
+    # reused. Catches ID-space drift before any "sum ≈ input" smoke test
+    # accidentally lets a broken result/ through (historical near=48,998
+    # vs keepers=402M bug).
+    if n_near != n_clusters:
+        raise RuntimeError(
+            f"[stage 5b] invariant violated: near.count={n_near:,} != "
+            f"keepers.count={n_clusters:,}. Every keeper_uid must resolve "
+            f"to exactly one wide row in near/; a deficit means uid_df.uid "
+            f"does not contain all of keepers.keeper_uid — typically an "
+            f"ID-space mismatch. Inspect: tools/debug_minhash_dedup.py "
+            f"--output_path {args.output_path} --quick"
+        )
+    if near_sum != n_in_clusters:
+        raise RuntimeError(
+            f"[stage 5b] invariant violated: "
+            f"near.sum(duplicate_count)={near_sum:,} != "
+            f"keepers.sum(duplicate_count)={n_in_clusters:,}. Cluster "
+            f"weights must be preserved across the keeper_uid join."
+        )
 
     # ============================================================
     # Stage 5c: isolated/  ——  没在任何 cluster 里的 doc，wide row
@@ -774,6 +881,43 @@ def main():
             force=force_isolated,
         )
         log.info("[stage 5c] isolated/ written in %s", fmt_dur(time.time() - t0))
+    isolated_df = spark.read.parquet(paths["isolated"])
+
+    t0 = time.time()
+    s5c = isolated_df.agg(
+        F.count(F.lit(1)).alias("n_isolated"),
+        F.sum("duplicate_count").alias("isolated_sum"),
+    ).collect()[0]
+    n_isolated = int(s5c["n_isolated"])
+    isolated_sum = int(s5c["isolated_sum"] or 0)
+    log.info("[stage 5c] stats in %s", fmt_dur(time.time() - t0))
+    log.info("  isolated rows         : %s", f"{n_isolated:,}")
+    log.info("  isolated sum          : %s", f"{isolated_sum:,}")
+
+    # Hard invariants. n_wcc_nodes is wcc/.count() and equals the count of
+    # distinct vids (chukonu WCC emits each vertex exactly once); so any
+    # exact uid not in wcc.vid must land in isolated/. Conservation of
+    # weight: each input row's __exact_cnt is in exactly one of (some
+    # cluster's keeper, isolated).
+    expected_isolated_rows = n_exact - n_wcc_nodes
+    if n_isolated != expected_isolated_rows:
+        raise RuntimeError(
+            f"[stage 5c] invariant violated: isolated.count={n_isolated:,} "
+            f"!= exact.count - wcc.count = "
+            f"{n_exact:,} - {n_wcc_nodes:,} = {expected_isolated_rows:,}. "
+            f"Every exact uid not in wcc.vid should appear in isolated/; a "
+            f"discrepancy means the uid==vid left_anti dropped the wrong "
+            f"rows (typical of an ID-space mismatch between exact/.uid and "
+            f"wcc/.vid)."
+        )
+    if isolated_sum + n_in_clusters != n_input:
+        raise RuntimeError(
+            f"[stage 5c] weight conservation violated: "
+            f"isolated_sum={isolated_sum:,} + keepers_sum={n_in_clusters:,} "
+            f"= {isolated_sum + n_in_clusters:,} != input rows={n_input:,}. "
+            f"Every input row's __exact_cnt must be accounted for by "
+            f"exactly one of (a cluster's keeper, an isolated row)."
+        )
 
     # ============================================================
     # Stage 5d: result/ = near/ ∪ isolated/
@@ -788,32 +932,51 @@ def main():
     else:
         banner("Stage 5d: union near + isolated -> result/")
         t0 = time.time()
-        near = spark.read.parquet(paths["near"])
-        isolated = spark.read.parquet(paths["isolated"])
         write_parquet_checkpoint(
-            near.unionByName(isolated),
+            near_df.unionByName(isolated_df),
             "result",
             paths["result"],
             force=force_result,
         )
         log.info("[stage 5d] result/ written in %s", fmt_dur(time.time() - t0))
+    result_df = spark.read.parquet(paths["result"])
 
-    # ============================================================
-    # Sanity check: sum(duplicate_count) 必须 == 原始 input 行数
-    # ============================================================
-    banner("Sanity check")
-    res = spark.read.parquet(paths["result"])
     t0 = time.time()
-    s5 = res.agg(
+    s5d = result_df.agg(
         F.count(F.lit(1)).alias("n_kept"),
         F.sum("duplicate_count").alias("n_sum"),
         F.max("duplicate_count").alias("max_cluster"),
         F.expr("percentile_approx(duplicate_count, 0.99)").alias("p99_cluster"),
         F.expr("percentile_approx(duplicate_count, 0.5)").alias("p50_cluster"),
     ).collect()[0]
-    n_kept = int(s5["n_kept"])
-    n_sum = int(s5["n_sum"] or 0)
-    log.info("sanity scan in %s", fmt_dur(time.time() - t0))
+    n_kept = int(s5d["n_kept"])
+    n_sum = int(s5d["n_sum"] or 0)
+    log.info("[stage 5d] stats in %s", fmt_dur(time.time() - t0))
+    log.info("  result rows           : %s", f"{n_kept:,}")
+    log.info("  result sum            : %s", f"{n_sum:,}")
+
+    # Hard invariants. unionByName preserves row count and per-row weight,
+    # so result must equal near + isolated exactly (both rows and sum).
+    if n_kept != n_near + n_isolated:
+        raise RuntimeError(
+            f"[stage 5d] invariant violated: result.count={n_kept:,} != "
+            f"near({n_near:,}) + isolated({n_isolated:,}) = "
+            f"{n_near + n_isolated:,}."
+        )
+    if n_sum != near_sum + isolated_sum:
+        raise RuntimeError(
+            f"[stage 5d] invariant violated: "
+            f"result.sum(duplicate_count)={n_sum:,} != "
+            f"near.sum({near_sum:,}) + isolated.sum({isolated_sum:,}) = "
+            f"{near_sum + isolated_sum:,}."
+        )
+
+    # ============================================================
+    # Sanity check: 全链路总账。result.sum 必须 == 原始 input 行数。
+    # 这条等式数学上已经被 stage 5c + 5d 的两条 invariant 推出来了，
+    # 但保留显式校验，万一上游 stats 算错也能拦住。
+    # ============================================================
+    banner("Sanity check")
     log.info("  input rows           : %s", f"{n_input:,}")
     log.info("  after exact dedup    : %s", f"{n_exact:,}")
     log.info("  final kept           : %s", f"{n_kept:,}")
@@ -830,9 +993,9 @@ def main():
              100.0 * (1 - n_kept / max(n_exact, 1)))
     log.info("  total   dedup ratio  : %.2f%%",
              100.0 * (1 - n_kept / max(n_input, 1)))
-    log.info("  cluster size  p50    : %s", f"{int(s5['p50_cluster'] or 0):,}")
-    log.info("  cluster size  p99    : %s", f"{int(s5['p99_cluster'] or 0):,}")
-    log.info("  cluster size  max    : %s", f"{int(s5['max_cluster'] or 0):,}")
+    log.info("  cluster size  p50    : %s", f"{int(s5d['p50_cluster'] or 0):,}")
+    log.info("  cluster size  p99    : %s", f"{int(s5d['p99_cluster'] or 0):,}")
+    log.info("  cluster size  max    : %s", f"{int(s5d['max_cluster'] or 0):,}")
     log.info("=" * 64)
     log.info("ALL DONE. total elapsed: %s", fmt_dur(time.time() - pipeline_t0))
     log.info("=" * 64)

@@ -15,7 +15,7 @@
 workdir=$(pwd)
 tmp_dir=/work/projects/polyullm/lipengxiang_tmp/tmp/spark-${SLURM_JOB_ID}
 cache_dir=$tmp_dir/chukonu_cache
-container_image=/lustre/projects/polyullm/container/chukonu+3.4.1-jdk11-2026010601.sqsh
+container_image=/lustre/projects/polyullm/pretrain/container/spark_simhash.sqsh
 container_name=chukonu-spark-${SLURM_JOB_ID:-manual}
 container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
 # ========================================================
