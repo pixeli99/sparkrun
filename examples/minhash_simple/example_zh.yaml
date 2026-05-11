@@ -1,0 +1,55 @@
+# Stage 1 (save_hash_key.py) 用 hash_source；
+# Stage 2 (inc_data.py) 用 source_hash_paths（可选）+ inc_paths + output_path。
+# 同一个 YAML 可以两阶段共用，两个脚本各取所需的字段。
+
+# -------------------- Stage 1: 算签名 --------------------
+hash_source:
+  - key: "fineweb_zh_2024_"   # md5 加盐，避免不同 source 之间 id 撞车
+    path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_zh_2024"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_zh_2024"
+
+  - key: "fineweb_zh_2025_"
+    # 日期 range：path 里用 {date} 占位，start/end 闭区间 + exclude 列表
+    path:
+      path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_zh_2025/{date}"
+      start_date: "20250101"
+      end_date: "20250131"
+      exclude:
+        - "20250115"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_zh_2025_01"
+
+# -------------------- Stage 2: 增量去重 --------------------
+# 历史已保留样本的签名（上一轮跑剩下的）；首次跑时去掉这段
+source_hash_paths:
+  - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/history_zh"
+
+# 本次新增：hash_oss_path 必须是 stage 1 里同一个 source 落盘的位置，
+# path 和 key 必须跟 stage 1 完全一致（否则 id 对不上）
+inc_paths:
+  - key: "fineweb_zh_2024_"
+    path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_zh_2024"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_zh_2024"
+
+  - key: "fineweb_zh_2025_"
+    path:
+      path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_zh_2025/{date}"
+      start_date: "20250101"
+      end_date: "20250131"
+      exclude:
+        - "20250115"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_zh_2025_01"
+
+# 同 text 在不同 part 出现导致同 id 多签名时，先合并 (band_idx, band_hashes, id) 三元组
+distinct_id: true
+
+output_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup_out/zh_2024_2025_01"
+
+# 想一个 YAML 跑多组（按 lang/year 切片），把上面 source_hash_paths+inc_paths+output_path
+# 包成 multi_inc 下的列表项即可：
+# multi_inc:
+#   - source_hash_paths: [...]
+#     inc_paths: [...]
+#     output_path: ...
+#   - source_hash_paths: [...]
+#     inc_paths: [...]
+#     output_path: ...
