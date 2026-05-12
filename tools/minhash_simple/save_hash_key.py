@@ -64,22 +64,23 @@ def main(spark: SparkSession, yaml_config: dict, num_buckets: int, num_hashes_pe
             F.col("_2").alias("band_hashes"),
             F.col("_3").alias("id"),
         )
-        df_hash_values.write.mode("overwrite").parquet(output_path)
+        # Partition by band so Stage 2 can process each band independently.
+        df_hash_values.write.mode("overwrite").partitionBy("band_idx").parquet(output_path)
 
 
 if __name__ == "__main__":
     print("sys.argv:", sys.argv)
     config_path = sys.argv[1]
 
-    spark = init_spark(config_path)
+    yaml_config = load_yaml_file(config_path)
+    print("yaml_config:", yaml_config)
 
     # 32 * 10 = 320 个 perm；比 minhash_dedup.py 默认的 num_perm=128 重，
     # 召回更激进。降下来对应改 num_buckets/num_hashes_per_bucket。
-    num_buckets = 32
-    num_hashes_per_bucket = 10
-    ngram = 5
+    num_buckets = int(yaml_config.get("num_buckets", 32))
+    num_hashes_per_bucket = int(yaml_config.get("num_hashes_per_bucket", 10))
+    ngram = int(yaml_config.get("ngram", 5))
 
-    yaml_config = load_yaml_file(config_path)
-    print("yaml_config:", yaml_config)
+    spark = init_spark(config_path)
 
     main(spark, yaml_config, num_buckets, num_hashes_per_bucket, ngram)

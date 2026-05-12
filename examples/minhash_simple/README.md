@@ -55,7 +55,7 @@ bash examples/minhash_simple/run_inc_data.sh
 
 ## 1.4TB 实操提醒
 
-1. **必须切片**。`inc_data.py` 那个 `row_number().partitionBy([band_idx, band_hashes])` 在大 boilerplate 桶上是单 reducer 死等，1.4TB 一锅炖会卡在 last 0.1% 几小时不动。先按 lang / year / source 切到 200-400GB 单片再跑。
+1. **仍建议切片**。`inc_data.py` 会按 `band_idx` 独立算 remove id，并用 `groupBy(band_hashes).min(id)` 避免大桶 window 排序，但 1.4TB 一锅炖仍会产生很大的 shuffle。先按 lang / year / source 切到 200-400GB 单片更稳。
 
 2. **`num_buckets=32, num_hashes_per_bucket=10`** 是 320 个 perm，比 `minhash_dedup.py` 默认 128 perm 重一倍多，召回更激进、shuffle 量更大。觉得删太多就在 `save_hash_key.py` 里调小 `num_buckets`。
 
