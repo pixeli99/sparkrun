@@ -1,0 +1,15 @@
+# Year-level minhash_simple config for FineWeb 012, all CC-MAIN 2023 dumps.
+
+hash_source:
+  - key: "fineweb_012_2023_"
+    path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012/CC-MAIN-2023-*/CC-MAIN-2023-*"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/year_2023"
+
+inc_paths:
+  - key: "fineweb_012_2023_"
+    path: "/lustre/projects/polyullm/lipengxiang_tmp/fineweb_012/CC-MAIN-2023-*/CC-MAIN-2023-*"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/year_2023"
+
+distinct_id: true
+
+output_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2023"
