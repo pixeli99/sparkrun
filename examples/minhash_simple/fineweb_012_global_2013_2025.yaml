@@ -1,0 +1,42 @@
+# Global minhash_simple config for FineWeb 012 after year-level dedup.
+# Run Stage 1 first to hash year_2013..year_2025 outputs, then Stage 2 for cross-year dedup.
+
+hash_source:
+  - key: "fineweb_012_global_2013_2025_"
+    path:
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2013"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2014"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2015"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2016"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2017"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2018"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2019"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2020"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2021"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2022"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2023"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2024"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2025"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025"
+
+inc_paths:
+  - key: "fineweb_012_global_2013_2025_"
+    path:
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2013"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2014"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2015"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2016"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2017"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2018"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2019"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2020"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2021"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2022"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2023"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2024"
+      - "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2025"
+    hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025"
+
+distinct_id: true
+
+output_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/global_2013_2025"
