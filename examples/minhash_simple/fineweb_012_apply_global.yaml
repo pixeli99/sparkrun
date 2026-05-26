@@ -1,0 +1,28 @@
+# 按年应用 global remove_ids（+ 跨年 extras 补丁），输出 path A 等价结果。
+# 13 年顺序跑，每年独立 leftanti + write，按年 _SUCCESS 续跑。
+
+remove_id_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/global_2013_2025_remove_ids"
+
+# 可选：跨年完全文本重复修补集（先跑 build_cross_year_extras 产出）。
+# 注释掉则按年 filter，不补跨年 dup（path B 保留 ~0.5–5% 跨年重复）。
+cross_year_extras_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/global_2013_2025_cross_year_extras"
+
+# 必须和 stage 2 inc_data.py 用的 key 一致，这样重算的 md5 才能匹配 remove_id
+global_id_key: "fineweb_012_global_2013_2025_"
+
+output_root: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/global_2013_2025"
+
+years:
+  - {year: 2013, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2013"}
+  - {year: 2014, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2014"}
+  - {year: 2015, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2015"}
+  - {year: 2016, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2016"}
+  - {year: 2017, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2017"}
+  - {year: 2018, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2018"}
+  - {year: 2019, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2019"}
+  - {year: 2020, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2020"}
+  - {year: 2021, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2021"}
+  - {year: 2022, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2022"}
+  - {year: 2023, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2023"}
+  - {year: 2024, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2024"}
+  - {year: 2025, text_input: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/year_2025"}

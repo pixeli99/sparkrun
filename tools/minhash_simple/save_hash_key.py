@@ -30,12 +30,32 @@ def init_spark(app_name: str) -> SparkSession:
     return SparkSession.builder.config(conf=conf).getOrCreate()
 
 
+def hadoop_path(spark: SparkSession, path: str):
+    return spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
+
+
+def hadoop_fs(spark: SparkSession, path: str):
+    hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
+    return hadoop_path(spark, path).getFileSystem(hadoop_conf)
+
+
+def path_exists(spark: SparkSession, path: str) -> bool:
+    return hadoop_fs(spark, path).exists(hadoop_path(spark, path))
+
+
+def output_complete(spark: SparkSession, path: str) -> bool:
+    return path_exists(spark, path + "/_SUCCESS")
+
+
 def main(spark: SparkSession, yaml_config: dict, num_buckets: int, num_hashes_per_bucket: int, ngram: int):
     for source in yaml_config["hash_source"]:
         input_list = get_input_path(source["path"])
         output_path = source["hash_oss_path"]
         print("input_list:", input_list)
         print("output_path:", output_path)
+        if output_complete(spark, output_path):
+            print(f"reuse existing hash output: {output_path}")
+            continue
 
         df = (
             spark.read.option("recursiveFileLookup", "true")

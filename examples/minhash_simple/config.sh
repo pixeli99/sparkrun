@@ -22,8 +22,19 @@ export SQL_SHUFFLE_PARTITIONS="${SQL_SHUFFLE_PARTITIONS:-$(awk "BEGIN {print int
 export SPARK_NETWORK_TIMEOUT="${SPARK_NETWORK_TIMEOUT:-600s}"
 export SPARK_EXECUTOR_HEARTBEAT_INTERVAL="${SPARK_EXECUTOR_HEARTBEAT_INTERVAL:-60s}"
 
-export SPARK_LOCAL_DIR="${SPARK_LOCAL_DIR:-/lustre/projects/polyullm/lipengxiang_tmp/spark_local/${SLURM_JOB_ID:-default}}"
+# 容器内 /tmp 由 submit_local.sh 把宿主机 /raid/enroot/runtime/user-100736 mount 进来，
+# 是每节点本地 NVMe。SPARK_LOCAL_DIR 必须落到 /tmp 下面，shuffle 才会走本地盘。
+# 写 lustre 路径会绕开 mount，直接打爆 lustre（已踩坑，参考 81527）。
+export SPARK_LOCAL_DIR="${SPARK_LOCAL_DIR:-/tmp/spark_local/${SLURM_JOB_ID:-default}}"
 mkdir -p "${SPARK_LOCAL_DIR}"
+
+# Lustre paths are read via Hadoop file://. RawLocalFS bypasses hidden .*.crc
+# sidecar checks, which can be stale after overwrite/copy.
+export USE_RAW_LOCAL_FS="${USE_RAW_LOCAL_FS:-true}"
+
+# Last resort: true skips unreadable/corrupt parquet files. This can make
+# outputs incomplete, so keep false unless you have confirmed bad inputs.
+export IGNORE_CORRUPT_FILES="${IGNORE_CORRUPT_FILES:-true}"
 
 export LOG_PATH="${LOG_PATH:-/tmp/spark_logs}"
 mkdir -p "${LOG_PATH}"

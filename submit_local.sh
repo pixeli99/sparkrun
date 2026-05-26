@@ -2,25 +2,23 @@
 #SBATCH --job-name=spark
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --mem=900GB
+#SBATCH --mem=500GB
 #SBATCH --cpus-per-task=64
 #SBATCH --output=logs/slurm/%j-spark.out
 #SBATCH --error=logs/slurm/%j-spark.err
-
+#SBATCH --exclude=kb3-a1-nv-dgx01,kb3-a1-nv-dgx04
 # set -x
 
 # ========================================================
 # replace these information with your own
 # ========================================================
 workdir=$(pwd)
-tmp_dir=/work/projects/polyullm/lipengxiang_tmp/tmp/spark-${SLURM_JOB_ID}
-cache_dir=$tmp_dir/chukonu_cache
+tmp_dir=${SPARK_TMP_ROOT:-/raid/enroot/runtime/user-100736}
+
+# cache_dir=$tmp_dir/chukonu_cache
 container_image=/lustre/projects/polyullm/pretrain/container/spark_simhash.sqsh
 container_name=chukonu-spark-${SLURM_JOB_ID:-manual}
-container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm,$cache_dir:/opt/chukonu_cache
-if [ -n "${EXTRA_CONTAINER_MOUNTS:-}" ]; then
-    container_mounts=${container_mounts},${EXTRA_CONTAINER_MOUNTS}
-fi
+container_mounts=/lustre/projects/polyullm:/lustre/projects/polyullm,/work/projects/polyullm:/work/projects/polyullm
 # ========================================================
 
 # Getting the node names
@@ -40,16 +38,16 @@ echo "IP Head: $ip_head"
 echo "Master web UI port: $master_webui_port"
 
 # create tmp folder
-mkdir -p ${tmp_dir}
-chmod -R 777 ${tmp_dir}
-mkdir -p ${cache_dir}
+# mkdir -p ${tmp_dir}
+# chmod -R 777 ${tmp_dir}
+# mkdir -p ${cache_dir}
 
 printenv
 
 echo "Starting Spark Master at $head_node"
-mkdir -p ${tmp_dir}/${head_node}/{tmp,logs,work}
-chmod -R 777 ${tmp_dir}/${head_node}
-head_mounts=${container_mounts},${tmp_dir}/${head_node}/tmp:/tmp,${tmp_dir}/${head_node}/logs:/opt/spark/logs,${tmp_dir}/${head_node}/work:/opt/spark/work
+# mkdir -p ${tmp_dir}/${head_node}/{tmp,logs,work}
+# chmod -R 777 ${tmp_dir}/${head_node}
+head_mounts=${container_mounts},${tmp_dir}:/tmp
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     --container-name=$container_name \
     --container-mounts=$head_mounts \
@@ -70,10 +68,10 @@ fi
 
 for ((i = 1; i <= worker_num; i++)); do
     node_i=${nodes_array[$i]}
-    echo "create tmp folder"
-    mkdir -p ${tmp_dir}/${node_i}/{tmp,logs,work}
-    chmod -R 777 ${tmp_dir}/${node_i}
-    worker_mounts=${container_mounts},${tmp_dir}/${node_i}/tmp:/tmp,${tmp_dir}/${node_i}/logs:/opt/spark/logs,${tmp_dir}/${node_i}/work:/opt/spark/work
+    # echo "create tmp folder"
+    # mkdir -p ${tmp_dir}/${node_i}/{tmp,logs,work}
+    # chmod -R 777 ${tmp_dir}/${node_i}
+    worker_mounts=${container_mounts},${tmp_dir}:/tmp
     echo "Starting Spark Worker $i at $node_i"
     srun --nodes=1 --ntasks=1 -w "$node_i" \
         --container-name=$container_name \
@@ -92,6 +90,7 @@ master_url=spark://$head_node_ip:$port
 executor_cores=$(( $SLURM_CPUS_PER_TASK ))
 executor_memory=$(( $SLURM_MEM_PER_NODE / 1024 ))G
 default_parallelism=$(( $SLURM_CPUS_PER_TASK * $worker_num ))
+# spark_local_dir=${SPARK_LOCAL_DIR:-/tmp/spark_local}
 
 echo "================ run task ========================"
 echo "config_script: $config_script"
@@ -102,6 +101,7 @@ echo "executor_memory: $executor_memory"
 echo "default_parallelism: $default_parallelism"
 echo "slurm_job_id: $SLURM_JOB_ID"
 echo "log_dir: $tmp_dir"
+# echo "spark_local_dir: $spark_local_dir"
 echo "=================================================="
 
 echo "sleep 60 seconds"

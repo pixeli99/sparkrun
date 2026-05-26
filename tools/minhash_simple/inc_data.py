@@ -85,9 +85,12 @@ def main(spark: SparkSession, yaml_config: dict):
             spark.read.option("recursiveFileLookup", "true")
             .parquet(*input_list)
             .withColumn("id", process_md5_udf("text", lit(inc_path["key"])))
-            .select("meta", "text", "id")
         )
-        df_inc_text = df_text if not df_inc_text else df_inc_text.unionByName(df_text)
+        df_inc_text = (
+            df_text
+            if df_inc_text is None
+            else df_inc_text.unionByName(df_text, allowMissingColumns=True)
+        )
 
     df_inc_count = df_inc_text.count()
     print("df_inc_count:", df_inc_count)

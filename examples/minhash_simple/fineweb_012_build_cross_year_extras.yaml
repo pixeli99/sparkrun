@@ -1,0 +1,22 @@
+# 构造跨年完全文本重复的 ID 修补集（path B 补丁，让其和 path A 严格等价）。
+# 读每年 hash 的 band_idx=0（任一 band 都有完整 id 集合），找 id 跨年出现的，
+# 挑 min(year) 当 canonical，其余年份写到 extras 表（按 year 分区）。
+
+band_idx: 0
+
+hash_inputs:
+  - {year: 2013, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2013"}
+  - {year: 2014, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2014"}
+  - {year: 2015, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2015"}
+  - {year: 2016, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2016"}
+  - {year: 2017, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2017"}
+  - {year: 2018, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2018"}
+  - {year: 2019, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2019"}
+  - {year: 2020, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2020"}
+  - {year: 2021, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2021"}
+  - {year: 2022, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2022"}
+  - {year: 2023, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2023"}
+  - {year: 2024, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2024"}
+  - {year: 2025, hash_oss_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/hash/fineweb_012/global_2013_2025/year_2025"}
+
+output_path: "/lustre/projects/polyullm/lipengxiang_tmp/minhash_simple/dedup/fineweb_012/global_2013_2025_cross_year_extras"
